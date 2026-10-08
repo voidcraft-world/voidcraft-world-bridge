@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from voidcraft_world_bridge.local_llm.agents import AgentRuntime
 from voidcraft_world_bridge.local_llm.plugin import PLUGIN_NAME as LOCAL_LLM
 from voidcraft_world_bridge.local_llm.plugin import LocalLlmPlugin
-from voidcraft_world_bridge.plugins import PluginContext
+from voidcraft_world_bridge.plugins import Plugin, PluginContext
 
 
-def builtin_plugins(context: PluginContext, *, agent_runtimes: Iterable[object] = ()) -> dict[str, object]:
+def builtin_plugins(context: PluginContext, *,
+                    agent_runtimes: Iterable[AgentRuntime] = ()) -> dict[str, Plugin]:
     """name → plugin for every built-in. `agent_runtimes` are handed to
     `local-llm` (see `local_llm/agents.py`); a stock bridge registers none."""
     return {LOCAL_LLM: LocalLlmPlugin(context, agent_runtimes=agent_runtimes)}

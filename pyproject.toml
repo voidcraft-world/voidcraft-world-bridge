@@ -46,6 +46,17 @@ default-groups = "all"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.mypy]
+python_version = "3.10"
+files = ["voidcraft_world_bridge"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+strict_equality = true
+# Not disallow_untyped_defs / disallow_any_generics: every JSON edge is a bare `dict` on
+# purpose (bodies arrive from a browser), and `dict[str, Any]` everywhere adds nothing.
+
 [tool.ruff]
 line-length = 120
 # target-version is read from requires-python.

@@ -6,20 +6,27 @@ ships with NONE; a host that embeds the bridge registers its own by passing
 `agent_runtimes=[…]` to `LocalLlmPlugin` (or `builtin_plugins`). A body naming a
 runtime that is not registered is a 400.
 
-An agent runtime is duck-typed:
-
-    name: str                                   # the `agent.runtime` value it answers to
-    default_model: str                          # the model a body that names none gets
-    model_error(model) -> str | None            # why a model is not one it takes
-    validate_agent(raw: dict) -> (dict | None, str | None)
-                                                # its own `agent` fields, cleaned, or why not
-    list_agents() -> list[dict]                 # rows for `GET /status?agents=1`
-    run(request: dict) -> dict                  # the chat result, or raise AgentRefused
+An agent runtime satisfies `AgentRuntime` below. Duck-typed: nothing inherits
+it, and the plugin never checks it at runtime — a host that runs mypy gets its
+runtimes checked against it, which is the point of writing it down as a type.
 
 The plugin checks the shared contract before `validate_agent` runs: an agent
 takes exactly one system and one user message, and no tools.
 """
 from __future__ import annotations
+
+from typing import Protocol
+
+
+class AgentRuntime(Protocol):
+    @property
+    def name(self) -> str: ...            # the `agent.runtime` value it answers to
+    @property
+    def default_model(self) -> str: ...   # the model a body that names none gets
+    def model_error(self, model: str) -> str | None: ...                      # why a model is not one it takes
+    def validate_agent(self, raw: dict) -> tuple[dict | None, str | None]: ...  # its `agent` fields cleaned, or why not
+    def list_agents(self) -> list[dict]: ...                                  # rows for `GET /status?agents=1`
+    def run(self, request: dict) -> dict: ...                                 # the chat result, or raise AgentRefused
 
 
 class AgentRefused(Exception):

@@ -18,6 +18,7 @@ Issues and pull requests are welcome. Small, focused changes land fastest.
 uv sync
 uv run pytest                                # no model server needed; every test fakes one
 uv run ruff check .                          # lint
+uv run mypy                                  # types
 uvx typos@1.36.3                             # spelling
 uv run voidcraft-world-bridge --port 7791    # a spare port, if a bridge already holds 7682
 ```

@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.guards import host_allowed, is_no_cors_browser_request, origin_allowed
 from voidcraft_world_bridge.plugins import (
+    Plugin,
     dispatch_plugin,
     parse_plugin_path,
     plugin_body_limit,
@@ -53,7 +54,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     server_version = NAME
 
-    plugins: ClassVar[dict[str, object]] = {}
+    plugins: ClassVar[dict[str, Plugin]] = {}
     # Host routes: path → name of a zero-argument method on the subclass. The
     # method reads `self.path` / `self.headers` itself and must send exactly one
     # response. Plugin paths and `/snapshot` are matched first.
@@ -245,7 +246,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             name, subpath = plugin_ref
             self._send_plugin_response(
                 dispatch_plugin(self.plugins, "GET", name, subpath, parse_qs(url.query), None,
-                                self.headers))
+                                dict(self.headers.items())))
             return
         if url.path == "/snapshot":
             self._send_json(200, self.snapshot_payload())
@@ -305,13 +306,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
             body = parsed
         self._send_plugin_response(
             dispatch_plugin(self.plugins, "POST", name, subpath,
-                            parse_qs(urlparse(self.path).query), body, self.headers))
+                            parse_qs(urlparse(self.path).query), body, dict(self.headers.items())))
 
     def log_message(self, format: str, *args) -> None:
         pass  # clients poll every few seconds — per-request access logs are noise
 
 
-def build_handler(plugins: dict[str, object] | None = None) -> type[BridgeHandler]:
+def build_handler(plugins: dict[str, Plugin] | None = None) -> type[BridgeHandler]:
     """A handler class bound to one plugin registry."""
     return type("Handler", (BridgeHandler,), {"plugins": dict(plugins or {})})
 

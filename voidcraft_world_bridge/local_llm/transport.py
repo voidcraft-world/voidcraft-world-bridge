@@ -15,8 +15,11 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from typing import Any
 
-Opener = Callable[..., object]
+Opener = Callable[..., Any]
+"""Anything that behaves like `urllib.request.urlopen`: called with a Request and
+a timeout, returns a context manager whose value has `.read()`."""
 
 
 class RuntimeDown(Exception):
@@ -50,7 +53,7 @@ def http_json(url: str, body: dict | None, timeout: float, opener: Opener | None
                                      headers={"Content-Type": "application/json"})
     open_fn = opener or urllib.request.urlopen
     try:
-        with open_fn(request, timeout=timeout) as response:  # type: ignore[attr-defined]
+        with open_fn(request, timeout=timeout) as response:
             raw = response.read()
     except urllib.error.HTTPError as err:
         detail = ""

@@ -27,13 +27,15 @@ import json
 import os
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import NamedTuple
 
 from voidcraft_world_bridge.local_llm import jobs as jobs_mod
 from voidcraft_world_bridge.local_llm import models as models_mod
 from voidcraft_world_bridge.local_llm import runtimes as runtimes_mod
-from voidcraft_world_bridge.local_llm.agents import AgentRefused
+from voidcraft_world_bridge.local_llm.agents import AgentRefused, AgentRuntime
 from voidcraft_world_bridge.local_llm.transport import RuntimeDown, RuntimeRefused
+from voidcraft_world_bridge.shape import typed
 
 PLUGIN_NAME = "local-llm"
 
@@ -72,6 +74,16 @@ seconds"."""
 UNKNOWN_ROUTE = {"error": "unknown route — GET /status, GET /job?id=, POST /chat"}
 
 
+class Installed(NamedTuple):
+    """What the probe found: the first server that answered, or the first
+    candidate with `models` None and `error` saying why (`_installed`)."""
+
+    runtime: runtimes_mod.Runtime
+    models: list[dict] | None
+    runtime_version: str | None
+    error: str | None
+
+
 class LocalLlmPlugin:
     name = PLUGIN_NAME
 
@@ -84,17 +96,17 @@ class LocalLlmPlugin:
     only lets the body in."""
 
     def __init__(self, context, *, opener=None, start_worker: bool = True,
-                 agent_runtimes: Iterable[object] = ()) -> None:
+                 agent_runtimes: Iterable[AgentRuntime] = ()) -> None:
         self._context = context
         self._opener = opener
         self._models_lock = threading.Lock()
-        # (stamp, runtime, models, runtime_version, error) — see _installed.
-        self._models_cache: tuple = (0.0, None, None, None, None)
+        # (stamp, what the probe found) — see _installed.
+        self._models_cache: tuple[float, Installed | None] = (0.0, None)
         self._jobs = jobs_mod.JobStore(self._run_chat, start_worker=start_worker)
         # Agents get their own queue and worker: a remote turn shares no memory
         # bandwidth with the local model, so it must not wait behind a local
         # generation.
-        self._agent_runtimes = {runtime.name: runtime for runtime in agent_runtimes}
+        self._agent_runtimes: dict[str, AgentRuntime] = {runtime.name: runtime for runtime in agent_runtimes}
         self._agent_jobs = jobs_mod.JobStore(self._run_agent, start_worker=start_worker)
 
     def routes(self) -> list[str]:
@@ -134,9 +146,9 @@ class LocalLlmPlugin:
         return 202, {"job_id": job["id"], **job}
 
     # -- internals ------------------------------------------------------------
-    def _installed(self) -> tuple:
-        """(runtime, models, runtime_version, error) — the first server that
-        answers, cached for MODELS_TTL_SECONDS. `models` is None when none did.
+    def _installed(self) -> Installed:
+        """The first server that answers, cached for MODELS_TTL_SECONDS; a miss
+        (`models` None) is never cached, so the next request probes again.
 
         A server that answers with an error (a web app squatting on a probed
         port, an endpoint that is not a model list) is passed over like one
@@ -145,15 +157,15 @@ class LocalLlmPlugin:
         """
         now = time.monotonic()
         with self._models_lock:
-            stamp, runtime, models, runtime_version, error = self._models_cache
-            if models is not None and now - stamp < MODELS_TTL_SECONDS:
-                return runtime, models, runtime_version, error
+            stamp, cached = self._models_cache
+            if cached is not None and cached.models is not None and now - stamp < MODELS_TTL_SECONDS:
+                return cached
         candidates = runtimes_mod.candidates()
-        found = None
+        found: Installed | None = None
         problems = []
         for candidate in candidates:
             try:
-                found = (candidate, candidate.list_models(self._opener), candidate.version(self._opener), None)
+                found = Installed(candidate, candidate.list_models(self._opener), candidate.version(self._opener), None)
                 break
             except RuntimeDown as err:
                 problems.append(("runtime_down", candidate, str(err)))
@@ -166,9 +178,9 @@ class LocalLlmPlugin:
             else:
                 tried = ", ".join(candidate.describe() for _, candidate, _ in problems)
                 error = f"runtime_down: no local model server answered (tried {tried})"
-            found = (candidates[0], None, None, error)
+            found = Installed(candidates[0], None, None, error)
         with self._models_lock:
-            self._models_cache = (now, *found)
+            self._models_cache = (now, found)
         return found
 
     def _status(self) -> dict:
@@ -243,8 +255,7 @@ def _validate_messages(raw: object) -> tuple[list[dict], str | None]:
         out = {"role": turn["role"], "content": content}
         if turn["role"] == "assistant" and isinstance(turn.get("tool_calls"), list):
             out["tool_calls"] = [
-                {"function": {"name": str(c.get("name", "")),
-                              "arguments": c.get("arguments") if isinstance(c.get("arguments"), dict) else {}}}
+                {"function": {"name": str(c.get("name", "")), "arguments": typed(c.get("arguments"), dict, {})}}
                 for c in turn["tool_calls"] if isinstance(c, dict)
             ]
         if turn["role"] == "tool" and isinstance(turn.get("tool_name"), str):
@@ -270,14 +281,16 @@ def _validate_tools(raw: object) -> tuple[list[dict] | None, str | None]:
     return raw, None
 
 
-def _validate_agent(raw: object, messages: list[dict], tools: list[dict] | None,
-                    agent_runtimes: dict[str, object]) -> tuple[dict | None, object, str | None]:
+def _validate_agent(raw: object, messages: list[dict], tools: list[dict] | None, model: str | None,
+                    agent_runtimes: Mapping[str, AgentRuntime]) -> tuple[dict | None, str | None, str | None]:
     """An agent turn: `{runtime, …}` naming a registered runtime, one system +
-    one user message and no tools. Returns (agent, runtime, problem); the
-    runtime checks its own fields (`agents.py`)."""
+    one user message and no tools. Returns (agent, model, problem): the model is
+    the body's or the runtime's default, and the runtime has checked it, as it
+    checks its own fields (`agents.py`)."""
     if not isinstance(raw, dict):
         return None, None, "agent must be an object {runtime, …}"
-    runtime = agent_runtimes.get(raw.get("runtime"))
+    runtime_name = raw.get("runtime")
+    runtime = agent_runtimes.get(runtime_name) if isinstance(runtime_name, str) else None
     if runtime is None:
         return None, None, f"agent.runtime must be one of {tuple(agent_runtimes)}"
     agent, problem = runtime.validate_agent(raw)
@@ -285,10 +298,15 @@ def _validate_agent(raw: object, messages: list[dict], tools: list[dict] | None,
         return None, None, problem
     if tools or [m["role"] for m in messages] != ["system", "user"]:
         return None, None, "an agent takes one system and one user message, and no tools"
-    return {"runtime": runtime.name, **(agent or {})}, runtime, None
+    model = model if model is not None else runtime.default_model
+    problem = runtime.model_error(model)
+    if problem:
+        return None, None, problem
+    return {"runtime": runtime.name, **(agent or {})}, model, None
 
 
-def _validate_chat(body: dict | None, agent_runtimes: dict[str, object] | None = None) -> tuple[dict, str | None]:
+def _validate_chat(body: dict | None,
+                   agent_runtimes: Mapping[str, AgentRuntime] | None = None) -> tuple[dict, str | None]:
     """Clamp and type-check a POST /chat body. The body arrives from a browser.
 
     Two shapes: `system` + `user` (one question), or `messages` (a conversation,
@@ -318,9 +336,10 @@ def _validate_chat(body: dict | None, agent_runtimes: dict[str, object] | None =
         return {}, "num_ctx must be an integer"
     num_ctx = max(2048, min(num_ctx, MAX_NUM_CTX)) if num_ctx else None
 
-    model = body.get("model")
-    if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 128):
+    raw_model = body.get("model")
+    if raw_model is not None and (not isinstance(raw_model, str) or not raw_model.strip() or len(raw_model) > 128):
         return {}, "model must be a non-empty string"
+    model: str | None = raw_model.strip() if isinstance(raw_model, str) else None
 
     max_tokens = body.get("max_tokens", DEFAULT_MAX_TOKENS)
     if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
@@ -346,11 +365,7 @@ def _validate_chat(body: dict | None, agent_runtimes: dict[str, object] | None =
 
     agent = None
     if body.get("agent") is not None:
-        agent, runtime, problem = _validate_agent(body.get("agent"), messages, tools, agent_runtimes or {})
-        if problem:
-            return {}, problem
-        model = model if model is not None else runtime.default_model
-        problem = runtime.model_error(model.strip() if isinstance(model, str) else model)
+        agent, model, problem = _validate_agent(body.get("agent"), messages, tools, model, agent_runtimes or {})
         if problem:
             return {}, problem
 
@@ -359,7 +374,7 @@ def _validate_chat(body: dict | None, agent_runtimes: dict[str, object] | None =
         "messages": messages,
         "tools": tools,
         "num_ctx": num_ctx,
-        "model": model.strip() if isinstance(model, str) else None,
+        "model": model,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "format": response_format,

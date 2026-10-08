@@ -22,6 +22,8 @@ one preference list serves every runtime.
 """
 from __future__ import annotations
 
+from voidcraft_world_bridge.shape import typed
+
 PREFERENCE = (
     "qwen3.6:35b-a3b",
     "qwen3.8",
@@ -46,7 +48,7 @@ happened to be the only thing installed."""
 
 def is_chat_model(model: dict) -> bool:
     name = str(model.get("name", "")).lower()
-    details = model.get("details") if isinstance(model.get("details"), dict) else {}
+    details = typed(model.get("details"), dict, {})
     family = str(details.get("family", "")).lower()
     families = " ".join(str(f).lower() for f in details.get("families") or [])
     haystack = f"{name} {family} {families}"

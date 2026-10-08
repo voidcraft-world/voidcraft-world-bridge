@@ -16,8 +16,9 @@ import urllib.request
 
 from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.builtins import LOCAL_LLM, builtin_plugins
-from voidcraft_world_bridge.plugins import PluginContext, discover_plugin_dirs, load_plugins
+from voidcraft_world_bridge.plugins import Plugin, PluginContext, discover_plugin_dirs, load_plugins
 from voidcraft_world_bridge.server import DEFAULT_PORT, LOOPBACK, NAME, build_handler, make_server
+from voidcraft_world_bridge.shape import typed
 
 PORT_ENV = "VOIDCRAFT_BRIDGE_PORT"
 
@@ -60,7 +61,7 @@ def serve(port: int) -> int:
     return 0
 
 
-def describe_local_model(plugin) -> str:
+def describe_local_model(plugin: Plugin) -> str:
     """One line on what `local-llm` found, read through its own `/status` route,
     so the banner and voidcraft.world can never disagree."""
     _, status = plugin.handle_get("/status", {})
@@ -87,8 +88,8 @@ def status(port: int) -> int:
     if snapshot is None:
         _log(f"{NAME}: nothing answering on {LOOPBACK}:{port}")
         return 1
-    bridge = snapshot.get("bridge") if isinstance(snapshot.get("bridge"), dict) else {}
-    plugins = snapshot.get("plugins") if isinstance(snapshot.get("plugins"), dict) else {}
+    bridge = typed(snapshot.get("bridge"), dict, {})
+    plugins = typed(snapshot.get("plugins"), dict, {})
     _log(f"{bridge.get('name', 'a bridge')} {bridge.get('version', '?')} — ONLINE on {LOOPBACK}:{port}")
     _log(f"  plugins: {', '.join(sorted(plugins)) or '(none)'}")
     return 0
