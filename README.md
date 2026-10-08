@@ -102,8 +102,19 @@ or list directories in `~/.config/voidcraft-world-bridge/plugins.json`:
 A plugin module defines `PLUGIN_NAME` and `create_plugin(context)`, returning an object
 with `routes()`, `handle_get(subpath, query)` and `handle_post(subpath, query, body)`.
 Handlers return `(status, dict)` for JSON or `(status, bytes, content_type)` for a raw
-page. A plugin that fails to load is skipped, and a handler that raises becomes a `500`;
-a plugin can never take the bridge down. Full contract: `voidcraft_world_bridge/plugins.py`.
+page. POST bodies are capped at 4 KB unless the plugin sets `max_body_bytes`. A plugin that
+fails to load is skipped, and a handler that raises becomes a `500`; a plugin can never take
+the bridge down. Full contract: `voidcraft_world_bridge/plugins.py`.
+
+A complete, runnable one to copy:
+[`examples/hello-plugin`](https://github.com/voidcraft-world/voidcraft-world-bridge/tree/main/examples/hello-plugin)
+— one file, every part of the contract, loaded and exercised by the test suite so it cannot
+drift from it.
+
+```bash
+VOIDCRAFT_BRIDGE_PLUGINS=$PWD/examples/hello-plugin voidcraft-world-bridge --port 7791
+curl 'http://127.0.0.1:7791/plugin/hello/greeting?name=you'
+```
 
 ## Development
 

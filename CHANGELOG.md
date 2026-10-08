@@ -6,6 +6,11 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+### Added
+
+- `examples/hello-plugin`: a complete plugin to copy, exercised by the test suite.
+- `max_body_bytes` on a plugin and the 4 KB default are now in the README.
+
 ### Fixed
 
 - A `tools` entry that is not an object is now a `400`, not a `500`.

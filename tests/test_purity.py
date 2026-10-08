@@ -19,7 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "voidcraft_world_bridge"
-SOURCES = sorted(PACKAGE.rglob("*.py"))
+# The examples run inside the bridge's environment, so they keep the same promise.
+SOURCES = sorted([*PACKAGE.rglob("*.py"), *(ROOT / "examples").rglob("*.py")])
 # Everything the public repo carries — docs and tests included: a leak in a README or
 # a test comment is still a leak. This file is the one exception, since it has to
 # spell out the shapes it looks for.
