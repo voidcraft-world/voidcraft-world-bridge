@@ -63,7 +63,7 @@ def http_json(url: str, body: dict | None, timeout: float, opener: Opener | None
     try:
         parsed = json.loads(raw or b"{}")
     except ValueError as err:
-        raise RuntimeRefused(200, f"unparseable reply: {err}") from err
+        raise RuntimeRefused(200, f"unparsable reply: {err}") from err
     if not isinstance(parsed, dict):
         raise RuntimeRefused(200, "reply was not a JSON object")
     return parsed

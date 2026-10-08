@@ -6,6 +6,7 @@ handler exception NEVER kills a request thread (500 instead); and the host is
 the one applying route parsing — plugins only ever see their own subpath.
 """
 import json
+import sys
 from pathlib import Path
 
 from voidcraft_world_bridge.plugins import (
@@ -131,6 +132,29 @@ def test_broken_dirs_are_skipped_with_warning(tmp_path):
     assert len(warnings) == 4                  # one warning per broken dir
 
 
+def test_a_sibling_package_imports_and_never_shadows_the_stdlib(tmp_path):
+    # The entry module may import a package beside it (`from my_pkg… import`),
+    # which is why the dir goes on sys.path at all — at the END. A plugin dir
+    # ahead of the stdlib could hand a stray `json.py` to the whole process.
+    directory = tmp_path / "pkg"
+    (directory / "demo_pkg").mkdir(parents=True)
+    (directory / "demo_pkg" / "__init__.py").write_text("")
+    (directory / "demo_pkg" / "impl.py").write_text("def make():\n    return 'made'\n")
+    (directory / "bridge_plugin.py").write_text(
+        "from demo_pkg.impl import make\n"
+        'PLUGIN_NAME = "pkg"\n\n'
+        "class _Plugin:\n"
+        '    name = "pkg"\n'
+        "    def routes(self):\n        return []\n"
+        "    def handle_get(self, subpath, query):\n        return 200, {'made': make()}\n"
+        "    def handle_post(self, subpath, query, body):\n        return 405, {}\n\n"
+        "def create_plugin(context):\n    return _Plugin()\n")
+    registry = load_plugins([directory], _context())
+    assert dispatch_plugin(registry, "GET", "pkg", "/", {}, None) == (200, {"made": "made"})
+    assert sys.path[0] != str(directory)
+    assert sys.path[-1] == str(directory)
+
+
 def test_duplicate_name_first_wins(tmp_path):
     warnings = []
     first = _write_plugin(tmp_path / "first", name="demo")
@@ -182,10 +206,10 @@ def test_dispatch_malformed_return_becomes_500(tmp_path):
 # ---------------------------------------------------------------------------
 # Per-plugin body limit + header-aware dispatch
 #
-# Both exist for ONE plugin — the MCP proxy in mcp-local/bridge-plugin/. Its
-# POST body is a `request_change` proposal (whose `content` has no length limit)
-# and its authentication is a bearer token the core would otherwise never hand
-# to a handler. Both are opt-in and clamped, so no other plugin changes.
+# Both exist for one kind of plugin: a proxy to an authenticated API. Its POST
+# body is a proposal whose free-text field has no length limit, and its
+# authentication is a bearer token the core would otherwise never hand to a
+# handler. Both are opt-in and clamped, so no other plugin changes.
 # ---------------------------------------------------------------------------
 HEADER_PLUGIN = '''
 PLUGIN_NAME = "hdr"

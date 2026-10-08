@@ -262,7 +262,8 @@ def _validate_tools(raw: object) -> tuple[list[dict] | None, str | None]:
         return None, f"tools must be a list of ≤ {MAX_TOOLS} definitions (≤ {MAX_TOOLS_CHARS} chars)"
     for tool in raw:
         fn = tool.get("function") if isinstance(tool, dict) else None
-        if tool.get("type") != "function" or not isinstance(fn, dict) or not isinstance(fn.get("name"), str):
+        if not isinstance(tool, dict) or tool.get("type") != "function" or not isinstance(fn, dict) \
+                or not isinstance(fn.get("name"), str):
             return None, "each tool must be {type: 'function', function: {name, description, parameters}}"
     return raw, None
 

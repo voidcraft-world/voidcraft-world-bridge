@@ -98,6 +98,18 @@ def test_plugin_post_body_over_the_default_cap_is_400():
     assert status == 400
 
 
+def test_a_content_length_that_is_not_a_number_is_400_on_every_body_route():
+    # Was a ValueError inside the handler: http.server printed a traceback and
+    # dropped the connection. Garbage in a header is the client's problem.
+    bad = {"Content-Length": "abc"}
+    with serving(build_handler({"echo": _Echo()})) as port:
+        status, _, body = request(port, "POST", "/plugin/echo/hi", headers=bad)
+        assert (status, body["error"]) == (400, "bad content length")
+    with serving(_HostHandler) as port:
+        status, _, body = request(port, "POST", "/act", headers=bad)
+        assert (status, body["error"]) == (400, "bad content length")
+
+
 def test_unknown_plugin_is_404():
     with serving(build_handler()) as port:
         status, _, _ = request(port, "GET", "/plugin/nope/x")

@@ -161,6 +161,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         self._send_json(response[0], response[1])
 
+    def _content_length(self) -> int | None:
+        """The declared body length: 0 when absent, None when it is not a number.
+
+        `int()` on a garbage header used to raise inside the handler, which
+        `http.server` answers by dropping the connection and printing a
+        traceback. A malformed request is a 400, and the caller sends it.
+        """
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            return 0
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
     def _read_json_object(
         self, max_bytes: int = MAX_BODY_BYTES, *, require_object: bool = True
     ) -> dict | None:
@@ -178,8 +193,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
         `require_object=False` is for a caller that accepts any JSON value and
         validates the shape itself.
         """
-        length = int(self.headers.get("Content-Length") or 0)
-        if not 0 < length <= max_bytes:
+        length = self._content_length()
+        if length is None or not 0 < length <= max_bytes:
             self._send_json(400, {"error": "bad content length"})
             return None
         try:
@@ -272,9 +287,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
         # declares `max_body_bytes` gets more, and never past
         # MAX_PLUGIN_BODY_BYTES — see plugin_body_limit.
         limit = plugin_body_limit(self.plugins, name, MAX_BODY_BYTES)
-        length = int(self.headers.get("Content-Length") or 0)
+        length = self._content_length()
         body: dict | None = None
-        if length > limit:
+        if length is None or length > limit:
             self._send_json(400, {"error": "bad content length"})
             return
         if length > 0:

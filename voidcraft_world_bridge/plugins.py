@@ -44,11 +44,11 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "voidcraft-world-bridge" / "plug
 
 # Hard ceiling on a plugin's POST body, whatever it asks for. The default stays
 # the core's 4 KB (server.MAX_BODY_BYTES) — this is only the most a plugin may
-# raise itself to, and it exists because ONE plugin genuinely needs more: the
-# MCP proxy carries a `request_change` proposal, whose `content` field has no
-# length limit of its own and routinely runs past 4 KB. Raising the core cap for
-# everybody to serve that one case would be the wrong trade; opting in per
-# plugin, with a ceiling, is the right one.
+# raise itself to. It exists because a plugin that proxies a richer API (a
+# proposal whose free-text field has no length limit of its own) routinely
+# carries bodies past 4 KB. Raising the core cap for everybody to serve that
+# case would be the wrong trade; opting in per plugin, with a ceiling, is the
+# right one.
 MAX_PLUGIN_BODY_BYTES = 5 * 1024 * 1024
 
 
@@ -108,9 +108,14 @@ def load_plugins(dirs: list[Path], context: PluginContext,
             if not entry.is_file():
                 raise FileNotFoundError(f"no {ENTRY_MODULE} in {directory}")
             # The plugin's own package (a sibling of its entry module) must be
-            # importable from the entry module's point of view.
+            # importable from the entry module's point of view. APPENDED, never
+            # inserted first: a plugin dir ahead of the stdlib would let a stray
+            # `json.py` in it hijack that name for the whole process and every
+            # later plugin. Appended, a colliding name fails THIS plugin's import
+            # loudly and the bridge logs it and moves on. Sibling packages must
+            # still be uniquely named — two plugins sharing one share sys.modules.
             if str(directory) not in sys.path:
-                sys.path.insert(0, str(directory))
+                sys.path.append(str(directory))
             module_name = "bridge_plugin_" + re.sub(r"[^a-z0-9]+", "_", directory.name.lower())
             spec = importlib.util.spec_from_file_location(module_name, entry)
             if spec is None or spec.loader is None:
@@ -165,8 +170,8 @@ def dispatch_plugin(registry: dict[str, object] | None, method: str, name: str,
     value → 500. Returns the same (status, dict) / (status, bytes, ctype)
     shapes the handlers produce.
 
-    A plugin that needs the REQUEST HEADERS — the MCP proxy does, because the
-    caller's bearer token is what authenticates it — defines
+    A plugin that needs the REQUEST HEADERS — one that proxies an authenticated
+    API, where the caller's bearer token is what authenticates it — defines
     `handle_request(method, subpath, query, body, headers)` instead of the
     handle_get/handle_post pair, and the host calls that. Additive: a plugin
     without it never sees a header, which is the right default (headers carry

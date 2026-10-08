@@ -94,13 +94,21 @@ def status(port: int) -> int:
     return 0
 
 
+def _add_port(parser: argparse.ArgumentParser, *, default: object) -> None:
+    parser.add_argument("--port", type=int, default=default,
+                        help=f"loopback port (default {DEFAULT_PORT}, or ${PORT_ENV})")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=NAME, description="Let voidcraft.world reach your machine.")
     parser.add_argument("--version", action="version", version=f"{NAME} {__version__}")
-    parser.add_argument("--port", type=int, default=_default_port(),
-                        help=f"loopback port (default {DEFAULT_PORT}, or ${PORT_ENV})")
+    _add_port(parser, default=_default_port())
     commands = parser.add_subparsers(dest="command")
-    commands.add_parser("status", help="report on a bridge running here")
+    # `status --port N` reads as naturally as `--port N status`, so the
+    # subcommand takes the flag too. Its default is SUPPRESS: a subparser's
+    # default would otherwise overwrite a value the root parser already read.
+    _add_port(commands.add_parser("status", help="report on a bridge running here"),
+              default=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.command == "status":
         return status(args.port)
