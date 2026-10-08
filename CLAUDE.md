@@ -57,5 +57,7 @@ route cannot forget them (`tests/test_server.py` asserts that). Mount the built-
 ```bash
 uv sync
 uv run pytest                                # no model server needed; every test fakes one
+uv run ruff check .                          # lint; the rule set is in pyproject.toml
+uvx typos@1.36.3                             # spelling, code and docs
 uv run voidcraft-world-bridge --port 7791    # a spare port, if a bridge already holds 7682
 ```

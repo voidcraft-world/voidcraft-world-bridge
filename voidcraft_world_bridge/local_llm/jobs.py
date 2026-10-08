@@ -24,7 +24,7 @@ import queue
 import secrets
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 MAX_PENDING = 4
 MAX_KEPT = 32

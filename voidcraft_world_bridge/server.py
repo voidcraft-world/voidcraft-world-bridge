@@ -15,8 +15,9 @@ to their local model, and every dependency is one more thing they must trust.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import ClassVar, Mapping
+from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
 from voidcraft_world_bridge import __version__

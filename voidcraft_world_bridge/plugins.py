@@ -32,9 +32,9 @@ import importlib.util
 import json
 import re
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
 
 PLUGIN_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 PLUGIN_PATH_RE = re.compile(r"^/plugin/([a-z0-9][a-z0-9-]{0,31})(/.*)?$")

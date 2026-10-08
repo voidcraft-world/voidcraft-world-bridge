@@ -10,7 +10,9 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+from collections.abc import Mapping
 from contextlib import contextmanager
+from typing import ClassVar
 
 from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.server import NAME, PROTOCOL, BridgeHandler, build_handler, make_server
@@ -158,8 +160,9 @@ def test_preflight_grants_private_network_access_only_to_allowed_origins():
 
 
 class _HostHandler(BridgeHandler):
-    GET_ROUTES = {"/extra": "_handle_extra"}
-    POST_ROUTES = {"/act": "_handle_act"}
+    # The spelling a host uses: ClassVar, so the routes are the class's, not an instance's.
+    GET_ROUTES: ClassVar[Mapping[str, str]] = {"/extra": "_handle_extra"}
+    POST_ROUTES: ClassVar[Mapping[str, str]] = {"/act": "_handle_act"}
 
     def _handle_extra(self):
         self._send_json(200, {"extra": True})

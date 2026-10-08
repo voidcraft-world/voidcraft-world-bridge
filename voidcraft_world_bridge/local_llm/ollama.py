@@ -17,7 +17,7 @@ import os
 
 from voidcraft_world_bridge.local_llm.transport import Opener, RuntimeDown, RuntimeRefused, http_json
 
-__all__ = ["RuntimeDown", "RuntimeRefused", "base_url", "list_models", "version", "chat"]
+__all__ = ["RuntimeDown", "RuntimeRefused", "base_url", "chat", "list_models", "version"]
 
 KIND = "ollama"
 LABEL = "Ollama"

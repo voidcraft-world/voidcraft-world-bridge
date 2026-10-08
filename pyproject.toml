@@ -35,7 +35,9 @@ voidcraft-world-bridge = "voidcraft_world_bridge.cli:main"
 
 [dependency-groups]
 dev = [
+    "mypy>=1.18,<2",
     "pytest>=7.4.0,<8",
+    "ruff>=0.16,<0.17",
 ]
 
 [tool.uv]
@@ -43,6 +45,23 @@ default-groups = "all"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+# target-version is read from requires-python.
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "BLE", "ARG", "SIM", "N", "RUF"]
+ignore = [
+    # RuntimeDown, RuntimeRefused, JobFailure, QueueFull, AgentRefused: names a host already catches.
+    "N818",
+    # En dashes in ranges (`1–4`, `5–60 s`) are typography, not confusables.
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# A fake implements a contract's signature and ignores most of it.
+"tests/*" = ["ARG"]
 
 [tool.uv.build-backend]
 # voidcraft_world_bridge/ lives at the project root (flat layout), not under src/

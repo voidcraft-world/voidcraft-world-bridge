@@ -7,9 +7,10 @@ plugin directory configured under the same name is skipped, never mounted twice
 """
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
-from voidcraft_world_bridge.local_llm.plugin import PLUGIN_NAME as LOCAL_LLM, LocalLlmPlugin
+from voidcraft_world_bridge.local_llm.plugin import PLUGIN_NAME as LOCAL_LLM
+from voidcraft_world_bridge.local_llm.plugin import LocalLlmPlugin
 from voidcraft_world_bridge.plugins import PluginContext
 
 

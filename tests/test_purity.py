@@ -37,7 +37,8 @@ FORBIDDEN = {
     "an email address": re.compile(r"[\w.+-]+@[\w-]+\.[a-z]{2,}", re.IGNORECASE),
     "a private params dir": re.compile(r"VOIDCRAFT_PARAMS|voidcraft-params"),
     "a personal tool": re.compile(r"trading|plaid|garmin|steward|robinhood", re.IGNORECASE),
-    "the private bridge's internals": re.compile(r"terminal_bridge|bridge-plugins|front-end/src|mcp-local|mcp_local|MCP proxy"),
+    "the private bridge's internals": re.compile(
+        r"terminal_bridge|bridge-plugins|front-end/src|mcp-local|mcp_local|MCP proxy"),
     "a Claude account dir": re.compile(r"\.claude-[a-z]"),
     "a word about the private side": re.compile(r"\bfounder|macos app|menu-bar", re.IGNORECASE),
 }

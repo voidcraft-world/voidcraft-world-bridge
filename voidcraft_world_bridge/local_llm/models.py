@@ -88,7 +88,8 @@ def pick_model(installed: list[dict], pinned: str | None = None) -> str | None:
     return chat[0] if chat else None
 
 
-def resolve_requested(requested: str | None, installed: list[dict], pinned: str | None) -> tuple[str | None, str | None]:
+def resolve_requested(requested: str | None, installed: list[dict],
+                      pinned: str | None) -> tuple[str | None, str | None]:
     """(model, error_code). A named model must be installed — the plugin never pulls.
 
     Pulling is a multi-gigabyte download; it belongs to the person at a

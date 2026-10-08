@@ -27,7 +27,7 @@ import json
 import os
 import threading
 import time
-from typing import Iterable
+from collections.abc import Iterable
 
 from voidcraft_world_bridge.local_llm import jobs as jobs_mod
 from voidcraft_world_bridge.local_llm import models as models_mod
@@ -117,7 +117,8 @@ class LocalLlmPlugin:
         return 404, dict(UNKNOWN_ROUTE)
 
     # -- POST -----------------------------------------------------------------
-    def handle_post(self, subpath: str, query: dict[str, list[str]], body: dict | None) -> tuple:
+    def handle_post(self, subpath: str, query: dict[str, list[str]],  # noqa: ARG002 — the handler signature is the contract
+                    body: dict | None) -> tuple:
         if subpath != "/chat":
             return 404, dict(UNKNOWN_ROUTE)
         request, problem = _validate_chat(body, self._agent_runtimes)
@@ -242,7 +243,8 @@ def _validate_messages(raw: object) -> tuple[list[dict], str | None]:
         out = {"role": turn["role"], "content": content}
         if turn["role"] == "assistant" and isinstance(turn.get("tool_calls"), list):
             out["tool_calls"] = [
-                {"function": {"name": str(c.get("name", "")), "arguments": c.get("arguments") if isinstance(c.get("arguments"), dict) else {}}}
+                {"function": {"name": str(c.get("name", "")),
+                              "arguments": c.get("arguments") if isinstance(c.get("arguments"), dict) else {}}}
                 for c in turn["tool_calls"] if isinstance(c, dict)
             ]
         if turn["role"] == "tool" and isinstance(turn.get("tool_name"), str):

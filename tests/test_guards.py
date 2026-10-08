@@ -13,15 +13,12 @@ Both close holes that the Origin guard structurally cannot:
 import pytest
 
 from voidcraft_world_bridge.guards import (
+    ALLOWED_HOSTS_ENV,
+    LEGACY_ALLOWED_HOSTS_ENV,
     allowed_remote_hosts,
     host_allowed,
     host_header_hostname,
     is_no_cors_browser_request,
-)
-
-from voidcraft_world_bridge.guards import (  # noqa: E402
-    ALLOWED_HOSTS_ENV,
-    LEGACY_ALLOWED_HOSTS_ENV,
     origin_allowed,
 )
 

@@ -168,9 +168,9 @@ def test_duplicate_name_first_wins(tmp_path):
 # Dispatch
 # ---------------------------------------------------------------------------
 def test_dispatch_unknown_plugin_404():
-    code, payload = dispatch_plugin({}, "GET", "nope", "/x", {}, None)
+    code, _ = dispatch_plugin({}, "GET", "nope", "/x", {}, None)
     assert code == 404
-    code, payload = dispatch_plugin(None, "GET", "nope", "/x", {}, None)
+    code, _ = dispatch_plugin(None, "GET", "nope", "/x", {}, None)
     assert code == 404
 
 
