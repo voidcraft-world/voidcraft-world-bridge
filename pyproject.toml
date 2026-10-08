@@ -15,6 +15,11 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 # Stdlib only, on purpose — see voidcraft_world_bridge/server.py.
@@ -35,6 +40,9 @@ dev = [
 
 [tool.uv]
 default-groups = "all"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.uv.build-backend]
 # voidcraft_world_bridge/ lives at the project root (flat layout), not under src/

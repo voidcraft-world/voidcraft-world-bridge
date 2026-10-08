@@ -1,5 +1,10 @@
 # voidcraft-world-bridge
 
+[![PyPI](https://img.shields.io/pypi/v/voidcraft-world-bridge)](https://pypi.org/project/voidcraft-world-bridge/)
+[![CI](https://github.com/voidcraft-world/voidcraft-world-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/voidcraft-world/voidcraft-world-bridge/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/voidcraft-world-bridge)](https://pypi.org/project/voidcraft-world-bridge/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A small loopback server that lets [voidcraft.world](https://voidcraft.world) talk to
 **your own local LLM**, so it can answer questions about your worlds or command a side in
 Arena World.
@@ -99,6 +104,18 @@ with `routes()`, `handle_get(subpath, query)` and `handle_post(subpath, query, b
 Handlers return `(status, dict)` for JSON or `(status, bytes, content_type)` for a raw
 page. A plugin that fails to load is skipped, and a handler that raises becomes a `500`;
 a plugin can never take the bridge down. Full contract: `voidcraft_world_bridge/plugins.py`.
+
+## Development
+
+```bash
+uv sync
+uv run pytest                                # no model server needed; every test fakes one
+uv run voidcraft-world-bridge --port 7791    # a spare port, if a bridge already holds 7682
+```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the two rules every change must keep (stdlib only, nothing
+private) and the checks CI runs. Found something exploitable? [SECURITY.md](SECURITY.md) says how
+to report it privately.
 
 ## Remote access (optional)
 

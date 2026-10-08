@@ -1,0 +1,41 @@
+name: Bug report
+description: The bridge does something it should not
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Bridge version
+      description: The output of `voidcraft-world-bridge --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Linux, Windows]
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python
+      description: The output of `python3 --version` (or `uv python list` if you use uvx)
+  - type: dropdown
+    id: server
+    attributes:
+      label: Model server
+      options: [Ollama, LM Studio, llama.cpp, Another OpenAI-compatible server, None]
+  - type: textarea
+    id: status
+    attributes:
+      label: What the bridge reports
+      description: Paste the output of `voidcraft-world-bridge status` and `curl 127.0.0.1:7682/plugin/local-llm/status`
+      render: text
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Include the exact error text.
+    validations:
+      required: true
