@@ -61,6 +61,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
     GET_ROUTES: ClassVar[Mapping[str, str]] = {}
     POST_ROUTES: ClassVar[Mapping[str, str]] = {}
 
+    def version_string(self) -> str:
+        """The Server header: the bridge's name, not the Python it runs on."""
+        return NAME
+
     # --- what /snapshot says ------------------------------------------------
 
     def snapshot_payload(self) -> dict:

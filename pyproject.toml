@@ -1,6 +1,6 @@
 [project]
 name = "voidcraft-world-bridge"
-version = "0.1.0"
+version = "0.1.1"
 description = "A loopback server that lets voidcraft.world reach your machine — starting with your own local LLM"
 requires-python = ">=3.10,<4"
 readme = "README.md"

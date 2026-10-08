@@ -17,7 +17,7 @@ That's the whole install. It finds your model server on its own and listens on
 `http://127.0.0.1:7682` until you press Ctrl-C:
 
 ```
-voidcraft-world-bridge 0.1.0 — listening on http://127.0.0.1:7682
+voidcraft-world-bridge 0.1.1 — listening on http://127.0.0.1:7682
   plugin: local-llm  → http://127.0.0.1:7682/plugin/local-llm/…
   local model:  Ollama at http://127.0.0.1:11434 → qwen3.6:35b-a3b
   Ctrl-C to stop

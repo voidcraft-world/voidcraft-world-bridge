@@ -6,6 +6,8 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-08
+
 ### Added
 
 - `examples/hello-plugin`: a complete plugin to copy, exercised by the test suite.
@@ -18,6 +20,7 @@ clients depend on are additive-only, so a breaking change is a major version.
 - A `Content-Length` header that is not a number is a `400`; it used to drop the connection.
 - A plugin directory is appended to `sys.path`, never put first, so a stray module in it cannot
   shadow the standard library for the whole process.
+- The `Server` header names the bridge only, not the Python version it runs on.
 
 ## [0.1.0] - 2026-10-08
 
@@ -29,5 +32,6 @@ clients depend on are additive-only, so a breaking change is a major version.
   point it at), picks the strongest installed chat model, and answers `POST /chat` as a job.
 - `voidcraft-world-bridge status`, `--port`, `--version`.
 
-[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/voidcraft-world/voidcraft-world-bridge/releases/tag/v0.1.0

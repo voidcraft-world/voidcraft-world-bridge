@@ -69,6 +69,12 @@ def test_snapshot_names_the_bridge_and_its_plugins():
     assert body["plugins"] == {"echo": {"routes": ["/plugin/echo/hi"]}}
 
 
+def test_the_server_header_names_the_bridge_and_not_the_python_version():
+    with serving(build_handler()) as port:
+        _, headers, _ = request(port, "GET", "/snapshot")
+    assert headers["Server"] == NAME
+
+
 def test_snapshot_omits_plugins_when_none_are_mounted():
     # Clients read ABSENCE as "no plugins"; an empty map would be a second spelling.
     with serving(build_handler()) as port:
