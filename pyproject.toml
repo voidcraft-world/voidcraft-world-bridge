@@ -1,0 +1,45 @@
+[project]
+name = "voidcraft-world-bridge"
+version = "0.1.0"
+description = "A loopback server that lets voidcraft.world reach your machine — starting with your own local LLM"
+requires-python = ">=3.10,<4"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "VoidCraft" }]
+keywords = ["local-llm", "ollama", "lm-studio", "llama.cpp", "voidcraft", "bridge"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Stdlib only, on purpose — see voidcraft_world_bridge/server.py.
+dependencies = []
+
+[project.urls]
+Homepage = "https://voidcraft.world"
+Source = "https://github.com/voidcraft-world/voidcraft-world-bridge"
+Issues = "https://github.com/voidcraft-world/voidcraft-world-bridge/issues"
+
+[project.scripts]
+voidcraft-world-bridge = "voidcraft_world_bridge.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0,<8",
+]
+
+[tool.uv]
+default-groups = "all"
+
+[tool.uv.build-backend]
+# voidcraft_world_bridge/ lives at the project root (flat layout), not under src/
+module-root = ""
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.12.0"]
+build-backend = "uv_build"
