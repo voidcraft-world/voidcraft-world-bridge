@@ -44,7 +44,7 @@ class Machine:
         self.servers = {int(port.lstrip("p")): handler for port, handler in servers.items()}
         self.requests: list[tuple[str, dict | None]] = []
 
-    def __call__(self, request, timeout=None):  # noqa: ARG002
+    def __call__(self, request, timeout=None):
         url = request.full_url
         port = int(url.split("127.0.0.1:", 1)[1].split("/", 1)[0])
         path = "/" + url.split(f"127.0.0.1:{port}/", 1)[1] if f"{port}/" in url else "/"
@@ -86,7 +86,7 @@ def ollama(models=("qwen3.5:9b",)):
     return handle
 
 
-def web_app(path, body):  # noqa: ARG001 — some unrelated dev server squatting on a probed port
+def web_app(path, body):
     return _refused(path, 404, b"<html>Cannot GET</html>")
 
 
@@ -307,4 +307,5 @@ def test_a_refusal_fails_the_job_with_the_runtimes_code():
     p = plugin(Machine(), agent_runtimes=[EchoAgent(refuse=True)])
     _, job = p.handle_post("/chat", {}, dict(AGENT_BODY))
     p._agent_jobs.run_next()
-    assert p.handle_get("/job", {"id": [job["job_id"]]})[1]["error"] == {"code": "nope", "message": "refused on purpose"}
+    assert p.handle_get("/job", {"id": [job["job_id"]]})[1]["error"] == {
+        "code": "nope", "message": "refused on purpose"}

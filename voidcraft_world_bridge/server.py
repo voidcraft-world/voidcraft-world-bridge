@@ -15,13 +15,15 @@ to their local model, and every dependency is one more thing they must trust.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import ClassVar, Mapping
+from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
 from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.guards import host_allowed, is_no_cors_browser_request, origin_allowed
 from voidcraft_world_bridge.plugins import (
+    Plugin,
     dispatch_plugin,
     parse_plugin_path,
     plugin_body_limit,
@@ -52,12 +54,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     server_version = NAME
 
-    plugins: ClassVar[dict[str, object]] = {}
+    plugins: ClassVar[dict[str, Plugin]] = {}
     # Host routes: path → name of a zero-argument method on the subclass. The
     # method reads `self.path` / `self.headers` itself and must send exactly one
     # response. Plugin paths and `/snapshot` are matched first.
     GET_ROUTES: ClassVar[Mapping[str, str]] = {}
     POST_ROUTES: ClassVar[Mapping[str, str]] = {}
+
+    def version_string(self) -> str:
+        """The Server header: the bridge's name, not the Python it runs on."""
+        return NAME
 
     # --- what /snapshot says ------------------------------------------------
 
@@ -161,6 +167,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         self._send_json(response[0], response[1])
 
+    def _content_length(self) -> int | None:
+        """The declared body length: 0 when absent, None when it is not a number.
+
+        `int()` on a garbage header used to raise inside the handler, which
+        `http.server` answers by dropping the connection and printing a
+        traceback. A malformed request is a 400, and the caller sends it.
+        """
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            return 0
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
     def _read_json_object(
         self, max_bytes: int = MAX_BODY_BYTES, *, require_object: bool = True
     ) -> dict | None:
@@ -178,8 +199,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
         `require_object=False` is for a caller that accepts any JSON value and
         validates the shape itself.
         """
-        length = int(self.headers.get("Content-Length") or 0)
-        if not 0 < length <= max_bytes:
+        length = self._content_length()
+        if length is None or not 0 < length <= max_bytes:
             self._send_json(400, {"error": "bad content length"})
             return None
         try:
@@ -229,7 +250,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             name, subpath = plugin_ref
             self._send_plugin_response(
                 dispatch_plugin(self.plugins, "GET", name, subpath, parse_qs(url.query), None,
-                                self.headers))
+                                dict(self.headers.items())))
             return
         if url.path == "/snapshot":
             self._send_json(200, self.snapshot_payload())
@@ -272,9 +293,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
         # declares `max_body_bytes` gets more, and never past
         # MAX_PLUGIN_BODY_BYTES — see plugin_body_limit.
         limit = plugin_body_limit(self.plugins, name, MAX_BODY_BYTES)
-        length = int(self.headers.get("Content-Length") or 0)
+        length = self._content_length()
         body: dict | None = None
-        if length > limit:
+        if length is None or length > limit:
             self._send_json(400, {"error": "bad content length"})
             return
         if length > 0:
@@ -289,13 +310,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
             body = parsed
         self._send_plugin_response(
             dispatch_plugin(self.plugins, "POST", name, subpath,
-                            parse_qs(urlparse(self.path).query), body, self.headers))
+                            parse_qs(urlparse(self.path).query), body, dict(self.headers.items())))
 
     def log_message(self, format: str, *args) -> None:
         pass  # clients poll every few seconds — per-request access logs are noise
 
 
-def build_handler(plugins: dict[str, object] | None = None) -> type[BridgeHandler]:
+def build_handler(plugins: dict[str, Plugin] | None = None) -> type[BridgeHandler]:
     """A handler class bound to one plugin registry."""
     return type("Handler", (BridgeHandler,), {"plugins": dict(plugins or {})})
 

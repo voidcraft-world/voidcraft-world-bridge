@@ -27,6 +27,7 @@ import re
 import time
 
 from voidcraft_world_bridge.local_llm.transport import Opener, RuntimeRefused, http_json
+from voidcraft_world_bridge.shape import typed
 
 KIND = "openai"
 LABEL = "OpenAI-compatible server"
@@ -106,11 +107,11 @@ def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temper
     payload = http_json(f"{base}/chat/completions", body, CHAT_TIMEOUT_SECONDS, opener)
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
-    choices = payload.get("choices") if isinstance(payload.get("choices"), list) else []
-    first = choices[0] if choices and isinstance(choices[0], dict) else {}
-    message = first.get("message") if isinstance(first.get("message"), dict) else {}
-    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-    content = message.get("content") if isinstance(message.get("content"), str) else ""
+    choices = typed(payload.get("choices"), list, [])
+    first = typed(choices[0], dict, {}) if choices else {}
+    message = typed(first.get("message"), dict, {})
+    usage = typed(payload.get("usage"), dict, {})
+    content = typed(message.get("content"), str, "")
     return {
         "text": _THINK_BLOCK.sub("", content, count=1),
         "tool_calls": _tool_calls(message.get("tool_calls")),
@@ -140,8 +141,8 @@ def to_openai_messages(messages: list[dict]) -> list[dict]:
                 pending.append((call_id, name))
             out.append({"role": "assistant", "content": turn.get("content") or "", "tool_calls": calls})
         elif role == "tool":
-            name = turn.get("tool_name")
-            match = next((entry for entry in pending if entry[1] == name), pending[0] if pending else None)
+            tool_name = turn.get("tool_name")
+            match = next((entry for entry in pending if entry[1] == tool_name), pending[0] if pending else None)
             if match is not None:
                 pending.remove(match)
             out.append({"role": "tool", "tool_call_id": match[0] if match else f"call_{index}",
@@ -164,7 +165,7 @@ def _tool_calls(raw: object) -> list[dict]:
                 arguments = json.loads(arguments) if arguments.strip() else {}
             except ValueError:
                 arguments = {}
-        calls.append({"name": function["name"], "arguments": arguments if isinstance(arguments, dict) else {}})
+        calls.append({"name": function["name"], "arguments": typed(arguments, dict, {})})
     return calls
 
 

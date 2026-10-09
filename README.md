@@ -1,5 +1,10 @@
 # voidcraft-world-bridge
 
+[![PyPI](https://img.shields.io/pypi/v/voidcraft-world-bridge)](https://pypi.org/project/voidcraft-world-bridge/)
+[![CI](https://github.com/voidcraft-world/voidcraft-world-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/voidcraft-world/voidcraft-world-bridge/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/voidcraft-world-bridge)](https://pypi.org/project/voidcraft-world-bridge/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A small loopback server that lets [voidcraft.world](https://voidcraft.world) talk to
 **your own local LLM**, so it can answer questions about your worlds or command a side in
 Arena World.
@@ -12,7 +17,7 @@ That's the whole install. It finds your model server on its own and listens on
 `http://127.0.0.1:7682` until you press Ctrl-C:
 
 ```
-voidcraft-world-bridge 0.1.0 — listening on http://127.0.0.1:7682
+voidcraft-world-bridge 0.1.1 — listening on http://127.0.0.1:7682
   plugin: local-llm  → http://127.0.0.1:7682/plugin/local-llm/…
   local model:  Ollama at http://127.0.0.1:11434 → qwen3.6:35b-a3b
   Ctrl-C to stop
@@ -97,8 +102,31 @@ or list directories in `~/.config/voidcraft-world-bridge/plugins.json`:
 A plugin module defines `PLUGIN_NAME` and `create_plugin(context)`, returning an object
 with `routes()`, `handle_get(subpath, query)` and `handle_post(subpath, query, body)`.
 Handlers return `(status, dict)` for JSON or `(status, bytes, content_type)` for a raw
-page. A plugin that fails to load is skipped, and a handler that raises becomes a `500`;
-a plugin can never take the bridge down. Full contract: `voidcraft_world_bridge/plugins.py`.
+page. POST bodies are capped at 4 KB unless the plugin sets `max_body_bytes`. A plugin that
+fails to load is skipped, and a handler that raises becomes a `500`; a plugin can never take
+the bridge down. Full contract: `voidcraft_world_bridge/plugins.py`.
+
+A complete, runnable one to copy:
+[`examples/hello-plugin`](https://github.com/voidcraft-world/voidcraft-world-bridge/tree/main/examples/hello-plugin)
+— one file, every part of the contract, loaded and exercised by the test suite so it cannot
+drift from it.
+
+```bash
+VOIDCRAFT_BRIDGE_PLUGINS=$PWD/examples/hello-plugin voidcraft-world-bridge --port 7791
+curl 'http://127.0.0.1:7791/plugin/hello/greeting?name=you'
+```
+
+## Development
+
+```bash
+uv sync
+uv run pytest                                # no model server needed; every test fakes one
+uv run voidcraft-world-bridge --port 7791    # a spare port, if a bridge already holds 7682
+```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the two rules every change must keep (stdlib only, nothing
+private) and the checks CI runs. Found something exploitable? [SECURITY.md](SECURITY.md) says how
+to report it privately.
 
 ## Remote access (optional)
 

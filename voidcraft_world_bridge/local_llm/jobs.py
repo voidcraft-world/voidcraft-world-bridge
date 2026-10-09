@@ -24,7 +24,7 @@ import queue
 import secrets
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 MAX_PENDING = 4
 MAX_KEPT = 32
@@ -114,7 +114,7 @@ class JobStore:
             outcome = {"state": DONE, "result": result, "model": result.get("model") or request.get("model")}
         except JobFailure as failure:
             outcome = {"state": FAILED, "error": {"code": failure.code, "message": failure.message}}
-        except Exception as err:  # a runner bug must fail ONE job, never kill the worker
+        except Exception as err:  # noqa: BLE001 — a runner bug must fail ONE job, never kill the worker
             outcome = {"state": FAILED, "error": {"code": "internal", "message": str(err)[:300]}}
         with self._lock:
             job.update(outcome)

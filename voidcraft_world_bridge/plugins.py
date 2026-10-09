@@ -32,9 +32,10 @@ import importlib.util
 import json
 import re
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Protocol
 
 PLUGIN_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 PLUGIN_PATH_RE = re.compile(r"^/plugin/([a-z0-9][a-z0-9-]{0,31})(/.*)?$")
@@ -44,12 +45,30 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "voidcraft-world-bridge" / "plug
 
 # Hard ceiling on a plugin's POST body, whatever it asks for. The default stays
 # the core's 4 KB (server.MAX_BODY_BYTES) — this is only the most a plugin may
-# raise itself to, and it exists because ONE plugin genuinely needs more: the
-# MCP proxy carries a `request_change` proposal, whose `content` field has no
-# length limit of its own and routinely runs past 4 KB. Raising the core cap for
-# everybody to serve that one case would be the wrong trade; opting in per
-# plugin, with a ceiling, is the right one.
+# raise itself to. It exists because a plugin that proxies a richer API (a
+# proposal whose free-text field has no length limit of its own) routinely
+# carries bodies past 4 KB. Raising the core cap for everybody to serve that
+# case would be the wrong trade; opting in per plugin, with a ceiling, is the
+# right one.
 MAX_PLUGIN_BODY_BYTES = 5 * 1024 * 1024
+
+
+class Plugin(Protocol):
+    """What the host calls on a mounted plugin. Duck-typed: nothing inherits this,
+    and the host never checks it at runtime.
+
+    Two opt-ins are NOT members, on purpose — the host reads them with `getattr`,
+    so a plugin written before they existed never has to know: an int
+    `max_body_bytes` (`plugin_body_limit`), and `handle_request(method, subpath,
+    query, body, headers)`, which REPLACES the get/post pair for a plugin that
+    needs the request headers (`dispatch_plugin`).
+    """
+
+    @property
+    def name(self) -> str: ...
+    def routes(self) -> list[str]: ...
+    def handle_get(self, subpath: str, query: dict[str, list[str]]) -> tuple: ...
+    def handle_post(self, subpath: str, query: dict[str, list[str]], body: dict | None) -> tuple: ...
 
 
 @dataclass(frozen=True)
@@ -93,7 +112,7 @@ def discover_plugin_dirs(env: Mapping[str, str],
 
 
 def load_plugins(dirs: list[Path], context: PluginContext,
-                 preloaded: dict[str, object] | None = None) -> dict[str, object]:
+                 preloaded: dict[str, Plugin] | None = None) -> dict[str, Plugin]:
     """Import each plugin dir's entry module and build the name → plugin registry.
 
     ANY failure (missing entry, bad name, import error, create_plugin raising)
@@ -101,16 +120,21 @@ def load_plugins(dirs: list[Path], context: PluginContext,
     because of a plugin. Duplicate names: first wins, and `preloaded` (the
     built-ins) come first.
     """
-    registry: dict[str, object] = dict(preloaded or {})
+    registry: dict[str, Plugin] = dict(preloaded or {})
     for directory in dirs:
         try:
             entry = directory / ENTRY_MODULE
             if not entry.is_file():
                 raise FileNotFoundError(f"no {ENTRY_MODULE} in {directory}")
             # The plugin's own package (a sibling of its entry module) must be
-            # importable from the entry module's point of view.
+            # importable from the entry module's point of view. APPENDED, never
+            # inserted first: a plugin dir ahead of the stdlib would let a stray
+            # `json.py` in it hijack that name for the whole process and every
+            # later plugin. Appended, a colliding name fails THIS plugin's import
+            # loudly and the bridge logs it and moves on. Sibling packages must
+            # still be uniquely named — two plugins sharing one share sys.modules.
             if str(directory) not in sys.path:
-                sys.path.insert(0, str(directory))
+                sys.path.append(str(directory))
             module_name = "bridge_plugin_" + re.sub(r"[^a-z0-9]+", "_", directory.name.lower())
             spec = importlib.util.spec_from_file_location(module_name, entry)
             if spec is None or spec.loader is None:
@@ -142,7 +166,7 @@ def parse_plugin_path(path: str) -> tuple[str, str] | None:
     return match.group(1), match.group(2) or "/"
 
 
-def plugin_body_limit(registry: dict[str, object] | None, name: str,
+def plugin_body_limit(registry: Mapping[str, Plugin] | None, name: str,
                       default: int) -> int:
     """How large a POST body this plugin accepts, clamped to MAX_PLUGIN_BODY_BYTES.
 
@@ -156,7 +180,7 @@ def plugin_body_limit(registry: dict[str, object] | None, name: str,
     return max(default, min(requested, MAX_PLUGIN_BODY_BYTES))
 
 
-def dispatch_plugin(registry: dict[str, object] | None, method: str, name: str,
+def dispatch_plugin(registry: Mapping[str, Plugin] | None, method: str, name: str,
                     subpath: str, query: dict[str, list[str]],
                     body: dict | None,
                     headers: Mapping[str, str] | None = None) -> tuple:
@@ -165,8 +189,8 @@ def dispatch_plugin(registry: dict[str, object] | None, method: str, name: str,
     value → 500. Returns the same (status, dict) / (status, bytes, ctype)
     shapes the handlers produce.
 
-    A plugin that needs the REQUEST HEADERS — the MCP proxy does, because the
-    caller's bearer token is what authenticates it — defines
+    A plugin that needs the REQUEST HEADERS — one that proxies an authenticated
+    API, where the caller's bearer token is what authenticates it — defines
     `handle_request(method, subpath, query, body, headers)` instead of the
     handle_get/handle_post pair, and the host calls that. Additive: a plugin
     without it never sees a header, which is the right default (headers carry
@@ -201,7 +225,7 @@ def dispatch_plugin(registry: dict[str, object] | None, method: str, name: str,
     return 500, {"error": f"plugin '{name}' returned a malformed response"}
 
 
-def plugin_routes(registry: dict[str, object] | None) -> dict:
+def plugin_routes(registry: Mapping[str, Plugin] | None) -> dict:
     """The additive /snapshot advertisement: {name: {"routes": [...]}}."""
     advertised: dict[str, dict] = {}
     for name, plugin in (registry or {}).items():

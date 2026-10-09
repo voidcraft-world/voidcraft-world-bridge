@@ -19,7 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "voidcraft_world_bridge"
-SOURCES = sorted(PACKAGE.rglob("*.py"))
+# The examples run inside the bridge's environment, so they keep the same promise.
+SOURCES = sorted([*PACKAGE.rglob("*.py"), *(ROOT / "examples").rglob("*.py")])
 # Everything the public repo carries — docs and tests included: a leak in a README or
 # a test comment is still a leak. This file is the one exception, since it has to
 # spell out the shapes it looks for.
@@ -37,7 +38,8 @@ FORBIDDEN = {
     "an email address": re.compile(r"[\w.+-]+@[\w-]+\.[a-z]{2,}", re.IGNORECASE),
     "a private params dir": re.compile(r"VOIDCRAFT_PARAMS|voidcraft-params"),
     "a personal tool": re.compile(r"trading|plaid|garmin|steward|robinhood", re.IGNORECASE),
-    "the private bridge's internals": re.compile(r"terminal_bridge|bridge-plugins|front-end/src"),
+    "the private bridge's internals": re.compile(
+        r"terminal_bridge|bridge-plugins|front-end/src|mcp-local|mcp_local|MCP proxy"),
     "a Claude account dir": re.compile(r"\.claude-[a-z]"),
     "a word about the private side": re.compile(r"\bfounder|macos app|menu-bar", re.IGNORECASE),
 }

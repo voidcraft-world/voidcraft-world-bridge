@@ -1,3 +1,7 @@
+# Three independent jobs. `test` is the matrix; `lint` holds the fast checks
+# that need one Python; `build` is the exact pre-flight of publish.yml, run on
+# every push so a broken wheel is found before tag day, when it is too late.
+# Actions are pinned to commit SHAs (dependabot keeps the `# vN` comments true).
 name: ci
 
 on:
@@ -8,7 +12,39 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push to a PR supersedes the run in flight; a run on main never does.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - run: uv lock --check
+      - run: uv run ruff check .
+      - run: uv run mypy
+      # A Rust binary with no Python API; the @version is its pin.
+      - run: uvx typos@1.36.3
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - run: uv build
+      - name: The wheel installs and runs
+        # `--version` exits before importing the server, so `status` is the real
+        # smoke: with nothing listening it must exit 1, which proves cli → server
+        # → plugins all import from the WHEEL (a wrong module-root would fail here).
+        run: |
+          uvx --from dist/*.whl voidcraft-world-bridge --version
+          set +e
+          uvx --from dist/*.whl voidcraft-world-bridge status --port 7799
+          test $? -eq 1
+
   test:
     strategy:
       fail-fast: false
@@ -17,6 +53,6 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
       - run: uv run --python ${{ matrix.python }} pytest -q

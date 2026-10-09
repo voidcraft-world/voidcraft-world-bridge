@@ -24,6 +24,7 @@ server they already run (Ollama, LM Studio, llama.cpp, any OpenAI-compatible one
 | `guards.py` | `host_allowed` (DNS rebinding), `origin_allowed`, `is_no_cors_browser_request`, the origin allowlist. The security reasoning lives in the docstrings here. |
 | `plugins.py` | Plugin discovery, loading, dispatch, body caps, the `/snapshot` advertisement. `discover_plugin_dirs(env, config_path, env_var=)` lets a host keep its own names. |
 | `server.py` | `BridgeHandler` (guards → plugin → `/snapshot` → host routes → 404), `bridge_block()`, `make_server` (loopback bind, no wider option). |
+| `shape.py` | `typed(value, kind, default)`: the one reader for a field of untrusted JSON, so mypy narrows and the `isinstance` idiom is written once. |
 | `cli.py` | `voidcraft-world-bridge [status] [--port] [--version]`, argparse; the banner names the model server `local-llm` found. |
 | `builtins.py` | The plugins every bridge mounts with no config (`local-llm`), and the one door for a host's agent runtimes. |
 | `local_llm/plugin.py` | `/status`, `/chat` (202 + job), `/job`; body validation (it arrives from a browser). |
@@ -57,5 +58,8 @@ route cannot forget them (`tests/test_server.py` asserts that). Mount the built-
 ```bash
 uv sync
 uv run pytest                                # no model server needed; every test fakes one
+uv run ruff check .                          # lint; the rule set is in pyproject.toml
+uv run mypy                                  # types, the package only; config in pyproject.toml
+uvx typos@1.36.3                             # spelling, code and docs
 uv run voidcraft-world-bridge --port 7791    # a spare port, if a bridge already holds 7682
 ```

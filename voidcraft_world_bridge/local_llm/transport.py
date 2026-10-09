@@ -10,12 +10,16 @@ down, slow, malformed, refused — with no model server running.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import urllib.error
 import urllib.request
-from typing import Callable
+from collections.abc import Callable
+from typing import Any
 
-Opener = Callable[..., object]
+Opener = Callable[..., Any]
+"""Anything that behaves like `urllib.request.urlopen`: called with a Request and
+a timeout, returns a context manager whose value has `.read()`."""
 
 
 class RuntimeDown(Exception):
@@ -49,21 +53,19 @@ def http_json(url: str, body: dict | None, timeout: float, opener: Opener | None
                                      headers={"Content-Type": "application/json"})
     open_fn = opener or urllib.request.urlopen
     try:
-        with open_fn(request, timeout=timeout) as response:  # type: ignore[attr-defined]
+        with open_fn(request, timeout=timeout) as response:
             raw = response.read()
     except urllib.error.HTTPError as err:
         detail = ""
-        try:
+        with contextlib.suppress(ValueError, AttributeError):
             detail = _error_text(json.loads(err.read() or b"{}"))
-        except (ValueError, AttributeError):
-            pass
         raise RuntimeRefused(err.code, detail or f"HTTP {err.code}") from err
     except (urllib.error.URLError, OSError, TimeoutError) as err:
         raise RuntimeDown(str(getattr(err, "reason", err))) from err
     try:
         parsed = json.loads(raw or b"{}")
     except ValueError as err:
-        raise RuntimeRefused(200, f"unparseable reply: {err}") from err
+        raise RuntimeRefused(200, f"unparsable reply: {err}") from err
     if not isinstance(parsed, dict):
         raise RuntimeRefused(200, "reply was not a JSON object")
     return parsed

@@ -16,8 +16,9 @@ from __future__ import annotations
 import os
 
 from voidcraft_world_bridge.local_llm.transport import Opener, RuntimeDown, RuntimeRefused, http_json
+from voidcraft_world_bridge.shape import typed
 
-__all__ = ["RuntimeDown", "RuntimeRefused", "base_url", "list_models", "version", "chat"]
+__all__ = ["RuntimeDown", "RuntimeRefused", "base_url", "chat", "list_models", "version"]
 
 KIND = "ollama"
 LABEL = "Ollama"
@@ -60,7 +61,7 @@ def list_models(base: str, opener: Opener | None = None) -> list[dict]:
     for entry in payload.get("models") or []:
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
-        details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
+        details = typed(entry.get("details"), dict, {})
         models.append({
             "name": str(entry["name"]),
             "size_bytes": int(entry.get("size") or 0),
@@ -118,7 +119,7 @@ def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temper
         else:
             raise
 
-    message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+    message = typed(payload.get("message"), dict, {})
     return {
         "text": str(message.get("content") or ""),
         "tool_calls": _tool_calls(message.get("tool_calls")),
@@ -142,5 +143,5 @@ def _tool_calls(raw: object) -> list[dict]:
         if not isinstance(fn, dict) or not isinstance(fn.get("name"), str):
             continue
         args = fn.get("arguments")
-        calls.append({"name": fn["name"], "arguments": args if isinstance(args, dict) else {}})
+        calls.append({"name": fn["name"], "arguments": typed(args, dict, {})})
     return calls

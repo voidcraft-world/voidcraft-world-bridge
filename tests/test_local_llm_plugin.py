@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from fake_ollama import FakeOllama
 
 from voidcraft_world_bridge.local_llm import jobs as jobs_mod
-from voidcraft_world_bridge.local_llm.plugin import LocalLlmPlugin
+from voidcraft_world_bridge.local_llm.plugin import LocalLlmPlugin, _validate_chat
 
 
 @dataclass
@@ -212,3 +212,12 @@ def test_a_bad_conversation_is_400():
     assert p.handle_post("/chat", {}, {"messages": [{"role": "wizard", "content": "x"}]})[0] == 400
     assert p.handle_post("/chat", {}, {"messages": [{"role": "system", "content": "only system"}]})[0] == 400
     assert p.handle_post("/chat", {}, {**CHAT, "tools": [{"type": "nope"}]})[0] == 400
+
+
+def test_a_tool_entry_that_is_not_an_object_is_a_400_not_a_500():
+    # `"nope".get` used to raise inside the handler, which the host reports as a
+    # 500 "plugin error". The body came from a browser; its shape is a 400.
+    body = {"messages": [{"role": "user", "content": "hi"}], "tools": ["nope"]}
+    request, problem = _validate_chat(body)
+    assert request == {}
+    assert problem is not None and "each tool must be" in problem

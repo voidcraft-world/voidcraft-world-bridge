@@ -1,0 +1,15 @@
+# Keeps the pinned action SHAs and the dev tools current. Actions weekly, since a
+# pinned SHA with no updater rots; Python dev tools monthly and as one PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      dev-tools:
+        patterns: ["*"]

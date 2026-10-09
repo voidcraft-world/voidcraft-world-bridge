@@ -10,7 +10,9 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+from collections.abc import Mapping
 from contextlib import contextmanager
+from typing import ClassVar
 
 from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.server import NAME, PROTOCOL, BridgeHandler, build_handler, make_server
@@ -67,6 +69,12 @@ def test_snapshot_names_the_bridge_and_its_plugins():
     assert body["plugins"] == {"echo": {"routes": ["/plugin/echo/hi"]}}
 
 
+def test_the_server_header_names_the_bridge_and_not_the_python_version():
+    with serving(build_handler()) as port:
+        _, headers, _ = request(port, "GET", "/snapshot")
+    assert headers["Server"] == NAME
+
+
 def test_snapshot_omits_plugins_when_none_are_mounted():
     # Clients read ABSENCE as "no plugins"; an empty map would be a second spelling.
     with serving(build_handler()) as port:
@@ -96,6 +104,18 @@ def test_plugin_post_body_over_the_default_cap_is_400():
     with serving(build_handler({"echo": _Echo()})) as port:
         status, _, _ = request(port, "POST", "/plugin/echo/hi", body={"pad": "x" * 5000})
     assert status == 400
+
+
+def test_a_content_length_that_is_not_a_number_is_400_on_every_body_route():
+    # Was a ValueError inside the handler: http.server printed a traceback and
+    # dropped the connection. Garbage in a header is the client's problem.
+    bad = {"Content-Length": "abc"}
+    with serving(build_handler({"echo": _Echo()})) as port:
+        status, _, body = request(port, "POST", "/plugin/echo/hi", headers=bad)
+        assert (status, body["error"]) == (400, "bad content length")
+    with serving(_HostHandler) as port:
+        status, _, body = request(port, "POST", "/act", headers=bad)
+        assert (status, body["error"]) == (400, "bad content length")
 
 
 def test_unknown_plugin_is_404():
@@ -146,8 +166,9 @@ def test_preflight_grants_private_network_access_only_to_allowed_origins():
 
 
 class _HostHandler(BridgeHandler):
-    GET_ROUTES = {"/extra": "_handle_extra"}
-    POST_ROUTES = {"/act": "_handle_act"}
+    # The spelling a host uses: ClassVar, so the routes are the class's, not an instance's.
+    GET_ROUTES: ClassVar[Mapping[str, str]] = {"/extra": "_handle_extra"}
+    POST_ROUTES: ClassVar[Mapping[str, str]] = {"/act": "_handle_act"}
 
     def _handle_extra(self):
         self._send_json(200, {"extra": True})
