@@ -34,6 +34,12 @@ for coding agents and the map of the modules; `AGENTS.md` is a symlink to it.
 - The contracts clients depend on (`/snapshot`, `/plugin/local-llm/status`, the env names) are
   additive-only. Add keys; never change what an existing key means.
 - A fix ships with the test that would have caught it.
+- A change a user can see adds a line under `## [Unreleased]` in `CHANGELOG.md`, in the same PR.
+
+## Releasing (maintainers)
+
+`scripts/release.py prepare`, then `scripts/release.py tag` once the release PR merges. Never
+push a `v*` tag by hand. The why and the details are in `CLAUDE.md` → Releasing.
 
 ## Conduct
 

@@ -19,8 +19,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "voidcraft_world_bridge"
-# The examples run inside the bridge's environment, so they keep the same promise.
-SOURCES = sorted([*PACKAGE.rglob("*.py"), *(ROOT / "examples").rglob("*.py")])
+# The examples run inside the bridge's environment, and the release script runs from a
+# bare checkout, so both keep the same promise.
+SOURCES = sorted([*PACKAGE.rglob("*.py"), *(ROOT / "examples").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")])
 # Everything the public repo carries — docs and tests included: a leak in a README or
 # a test comment is still a leak. This file is the one exception, since it has to
 # spell out the shapes it looks for.
@@ -47,6 +48,12 @@ FORBIDDEN = {
 
 def test_the_package_has_sources():
     assert PACKAGE.is_dir() and SOURCES, PACKAGE
+
+
+def test_agents_md_is_the_agent_guide_itself():
+    """One guide for every coding agent: AGENTS.md points at CLAUDE.md, never a copy that drifts."""
+    agents = ROOT / "AGENTS.md"
+    assert agents.is_symlink() and agents.readlink() == Path("CLAUDE.md"), agents
 
 
 def test_imports_are_stdlib_or_this_package():
