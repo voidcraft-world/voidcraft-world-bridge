@@ -33,6 +33,7 @@ server they already run (Ollama, LM Studio, llama.cpp, any OpenAI-compatible one
 | `local_llm/models.py` | Which installed model answers; reads both Ollama tags and OpenAI-style ids. |
 | `local_llm/jobs.py` | The bounded single-worker queue, and why generation is a job. |
 | `local_llm/agents.py` | The agent-runtime contract. The package ships NONE; a host registers its own. |
+| `scripts/release.py` | Cutting a release (below). Not shipped in the wheel; stdlib only all the same. |
 
 ## Extending it as a host
 
@@ -52,6 +53,36 @@ route cannot forget them (`tests/test_server.py` asserts that). Mount the built-
 - Env names: `VOIDCRAFT_BRIDGE_PLUGINS`, `VOIDCRAFT_BRIDGE_ALLOWED_HOSTS` (the legacy
   `TERMINAL_BRIDGE_ALLOWED_HOSTS` is unioned in), `VOIDCRAFT_LOCAL_LLM_URL`,
   `VOIDCRAFT_OLLAMA_URL`, `VOIDCRAFT_LOCAL_LLM_MODEL`.
+
+## Releasing
+
+A PyPI version is forever: it can be yanked, never re-uploaded. So a release is two steps, and
+neither is done by hand.
+
+```bash
+uv run python scripts/release.py prepare patch   # or minor | major | X.Y.Z; then review + merge the PR
+uv run python scripts/release.py tag             # on main, after the merge: the irreversible step
+```
+
+- `prepare` refuses an empty `## [Unreleased]`, so every user-visible change adds a line there
+  in its own PR. It bumps `pyproject.toml`, moves `[Unreleased]` under the new version, rewrites
+  the compare links, runs the whole CI ladder locally (plus the wheel smoke), and opens the PR.
+- `tag` checks that `main` is clean and even with `origin`, that CI is green on HEAD, and that
+  the version is not on PyPI yet. Then it asks, tags, pushes, watches `publish.yml`, and
+  verifies: PyPI lists it, `uvx voidcraft-world-bridge@X.Y.Z` runs, and the GitHub Release has
+  the wheel and the sdist. It is re-runnable: a tag already pushed skips to verification.
+- Publishing is PyPI trusted publishing. Only `publish.yml`, in the `pypi` environment
+  (which allows `v*` tags only), can upload. Renaming either breaks it until the publisher on
+  PyPI is updated.
+- The history is public. Commits and tags use a GitHub noreply address, set in this repo only;
+  both steps refuse anything else.
+- A host that embeds the bridge follows releases through `VOIDCRAFT_BRIDGE_CONSUMERS`
+  (`os.pathsep`-separated project dirs) or `--consumer DIR`. `tag` ends by moving each
+  consumer's `uv.lock` to the new version. The lock change is left uncommitted, and a version
+  outside the consumer's declared range fails loudly instead of quietly keeping the old pin.
+  `sync-consumers` does that step on its own. It also says when the bridge running on the
+  default port is older than the release and needs a restart.
+- Every step takes `--dry-run`.
 
 ## Commands
 
