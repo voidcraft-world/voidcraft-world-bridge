@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,7 @@ import pytest
 
 from voidcraft_world_bridge.cli import main
 from voidcraft_world_bridge.jobs import BackgroundJob, JobStore, QueueFull
-from voidcraft_world_bridge.plugins import PluginContext, close_plugins, load_plugins, plugin_routes
+from voidcraft_world_bridge.plugins import PluginContext, close_plugins, load_plugins, plugin_module_name, plugin_routes
 from voidcraft_world_bridge.policy import CallerPolicy
 from voidcraft_world_bridge.routing import Route, RoutedPlugin
 from voidcraft_world_bridge.server import BridgeHandler
@@ -60,6 +61,23 @@ def test_invalid_factory_has_actionable_diagnostic(tmp_path):
     assert not registry
     assert registry.diagnostics[0]["error"] == "ValueError"
     assert main(["check-plugin", str(tmp_path)]) == 1
+
+
+def test_validation_failure_closes_created_plugin(tmp_path):
+    (tmp_path / "bridge_plugin.py").write_text('''
+PLUGIN_NAME = "bad"
+class Invalid:
+    name = "wrong-name"
+    def __init__(self, context): self.context = context
+    def close(self): self.context.log("closed")
+def create_plugin(context): return Invalid(context)
+''')
+    messages = []
+    registry = load_plugins([tmp_path], PluginContext(status_port=7791, log=messages.append))
+    assert not registry
+    assert messages.count("closed") == 1
+    assert registry.diagnostics[0]["error"] == "ValueError"
+    assert plugin_module_name(tmp_path) not in sys.modules
 
 
 def test_background_job_refuses_overlap_and_copies_result():

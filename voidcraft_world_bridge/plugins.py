@@ -126,7 +126,11 @@ def load_plugins(dirs: list[Path], context: PluginContext,
     """
     registry = PluginRegistry(preloaded or {})
     for directory in dirs:
+        module_name = None
+        previous_module = None
         try:
+            module_name = plugin_module_name(directory)
+            previous_module = sys.modules.get(module_name)
             entry = directory / ENTRY_MODULE
             if not entry.is_file():
                 raise FileNotFoundError(f"no {ENTRY_MODULE} in {directory}")
@@ -139,7 +143,6 @@ def load_plugins(dirs: list[Path], context: PluginContext,
             # still be uniquely named — two plugins sharing one share sys.modules.
             if str(directory) not in sys.path:
                 sys.path.append(str(directory))
-            module_name = plugin_module_name(directory)
             spec = importlib.util.spec_from_file_location(module_name, entry)
             if spec is None or spec.loader is None:
                 raise ImportError(f"cannot load {entry}")
@@ -154,10 +157,19 @@ def load_plugins(dirs: list[Path], context: PluginContext,
                 context.log(f"bridge: plugin '{name}' already loaded — skipping {directory}")
                 continue
             plugin = module.create_plugin(context)
-            validate_plugin(plugin, name)
+            try:
+                validate_plugin(plugin, name)
+            except Exception:
+                close_plugins({name: plugin}, context.log)
+                raise
             registry[name] = plugin
             registry.diagnostics.append({"plugin": name, "state": "loaded"})
         except Exception as exc:  # noqa: BLE001 — a broken plugin must never stop the bridge
+            if module_name is not None:
+                if previous_module is None:
+                    sys.modules.pop(module_name, None)
+                else:
+                    sys.modules[module_name] = previous_module
             registry.diagnostics.append({"entry": directory.name, "state": "failed",
                                          "error": type(exc).__name__})
             context.log(

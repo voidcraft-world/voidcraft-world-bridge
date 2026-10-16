@@ -9,6 +9,8 @@ clients depend on are additive-only, so a breaking change is a major version.
 - Add optional caller policies, declarative routes, managed local services, reusable jobs and a socket-free plugin test client.
 - Validate plugin factories, advertise startup diagnostics, and add `check-plugin DIR`.
 - Close plugin resources with the server; reject negative body lengths and malformed JSON responses safely.
+- Clean up rejected factory results and invalidate stopped service endpoints. Keep child HTTP traffic
+  direct to loopback, without proxy or redirect credential forwarding.
 
 ## [0.1.1] - 2026-10-08
 

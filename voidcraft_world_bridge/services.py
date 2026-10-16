@@ -17,6 +17,12 @@ from pathlib import Path
 LOOPBACK = "127.0.0.1"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        # A child response must not forward its bearer key or request to another service.
+        return None
+
+
 def find_uv() -> str | None:
     found = shutil.which("uv")
     if found:
@@ -77,12 +83,14 @@ class ManagedService:
         self._active = 0
         self._closed = threading.Event()
         self._reaper_started = False
+        self._http = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
     def _current_state_locked(self) -> str:
         if self._state in ("starting", "ready") and self._proc is not None and self._proc.poll() is not None:
             self._state, self._failed_at = "failed", self._clock()
             self._error = f"{self._label} exited ({self._proc.returncode}): {tail(self._log_path)}"
             self._proc = None
+            self._port, self._key = None, None
         return self._state
 
     def state(self) -> str:
@@ -108,8 +116,8 @@ class ManagedService:
                 return state
             if state in ("failed", "unavailable") and self._clock() - self._failed_at < self._backoff:
                 return state
-            self._port, self._key = free_loopback_port(), secrets.token_urlsafe(24)
             try:
+                self._port, self._key = free_loopback_port(), secrets.token_urlsafe(24)
                 argv = self._command(self._port)
                 if argv is None:
                     self._state, self._failed_at = "unavailable", self._clock()
@@ -134,8 +142,8 @@ class ManagedService:
                 threading.Thread(target=self._reap_forever, daemon=True, name=f"{self._label}-idle").start()
             return self._state
 
-    def _get_health(self) -> dict | None:
-        reply = self.request("GET", "/health", None, 2)
+    def _get_health(self, proc: subprocess.Popen | None = None) -> dict | None:
+        reply = self.request("GET", "/health", None, 2, expected_proc=proc)
         if reply is None or reply[0] != 200:
             return None
         try:
@@ -151,7 +159,7 @@ class ManagedService:
                 if self._proc is not proc or proc.poll() is not None:
                     return
             try:
-                health = self._get_health()
+                health = self._get_health(proc)
                 ready = health is not None and self._ready(health)
             except Exception:  # noqa: BLE001 — a probe error is retried until the startup deadline
                 ready, health = False, None
@@ -177,6 +185,7 @@ class ManagedService:
                                  or self._clock() - self._last_used <= self._idle_stop_seconds):
                 return False
             proc, self._proc = self._proc, None
+            self._port, self._key = None, None
             self._state, self._health = ("failed" if keep_error else "stopped"), None
             if keep_error:
                 self._failed_at = self._clock()
@@ -205,8 +214,16 @@ class ManagedService:
             return self.stop(reason="idle", expected_proc=proc, only_if_idle=True)
         return False
 
-    def request(self, method: str, path: str, body: dict | None, timeout: float) -> tuple[int, bytes] | None:
+    def request(self, method: str, path: str, body: dict | None, timeout: float,
+                *, expected_proc: subprocess.Popen | None = None) -> tuple[int, bytes] | None:
+        if not path.startswith("/"):
+            raise ValueError("service requests require an absolute path")
         with self._lock:
+            state = self._current_state_locked()
+            if self._closed.is_set() or self._proc is None or state not in ("starting", "ready"):
+                return None
+            if expected_proc is not None and self._proc is not expected_proc:
+                return None
             port, key = self._port, self._key
             if port is None or key is None:
                 return None
@@ -217,10 +234,11 @@ class ManagedService:
                 data=None if body is None else json.dumps(body).encode(),
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
             try:
-                with urllib.request.urlopen(request, timeout=timeout) as response:
+                with self._http.open(request, timeout=timeout) as response:
                     return response.status, response.read()
             except urllib.error.HTTPError as exc:
-                return exc.code, exc.read()
+                with exc:
+                    return exc.code, exc.read()
             except (OSError, ValueError):
                 return None
         finally:

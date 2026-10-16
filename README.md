@@ -155,13 +155,16 @@ Route handlers take `(query, body)` and return the existing response tuples. `op
 Caller policies can only narrow the host guards. They are not authentication of local processes.
 
 A plugin owning resources should implement `close()`. `make_server()` calls it on server close;
-embedding hosts constructing their own server must call `close_plugins()` themselves. A background
+the loader also closes a factory result that fails validation.
+Embedding hosts constructing their own server must call `close_plugins()` themselves. A background
 callable cannot be forcibly cancelled: both job helpers reject new submissions on close, and accepted
 work drains while the process remains alive. Detached durable jobs stay outside these helpers.
 
 `ManagedService` accepts trusted command/environment callbacks, a log path, and a readiness predicate.
 The child must bind loopback and verify the supplied per-spawn key. No command comes from an HTTP body.
 Call its `close()` from your plugin's `close()`; request bodies and credentials are never logged by it.
+Requests use absolute paths, bypass system proxies and do not follow redirects. A stopped or failed
+child cannot receive new requests; probes from an older launch cannot contact its replacement.
 
 Check a trusted plugin before starting the server:
 
