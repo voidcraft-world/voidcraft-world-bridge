@@ -6,6 +6,10 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+- Add optional caller policies, declarative routes, managed local services, reusable jobs and a socket-free plugin test client.
+- Validate plugin factories, advertise startup diagnostics, and add `check-plugin DIR`.
+- Close plugin resources with the server; reject negative body lengths and malformed JSON responses safely.
+
 ## [0.1.1] - 2026-10-08
 
 ### Added

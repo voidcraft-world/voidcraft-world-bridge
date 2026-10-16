@@ -13,10 +13,11 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.builtins import LOCAL_LLM, builtin_plugins
-from voidcraft_world_bridge.plugins import Plugin, PluginContext, discover_plugin_dirs, load_plugins
+from voidcraft_world_bridge.plugins import Plugin, PluginContext, close_plugins, discover_plugin_dirs, load_plugins
 from voidcraft_world_bridge.server import DEFAULT_PORT, LOOPBACK, NAME, build_handler, make_server
 from voidcraft_world_bridge.shape import typed
 
@@ -110,7 +111,16 @@ def main(argv: list[str] | None = None) -> int:
     # default would otherwise overwrite a value the root parser already read.
     _add_port(commands.add_parser("status", help="report on a bridge running here"),
               default=argparse.SUPPRESS)
+    check = commands.add_parser("check-plugin", help="load and validate a trusted plugin directory without serving")
+    check.add_argument("directory", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "check-plugin":
+        plugins = load_plugins([args.directory], PluginContext(status_port=args.port, log=_log))
+        try:
+            _log(json.dumps(plugins.diagnostics))
+            return 0 if plugins else 1
+        finally:
+            close_plugins(plugins, _log)
     if args.command == "status":
         return status(args.port)
     return serve(args.port)

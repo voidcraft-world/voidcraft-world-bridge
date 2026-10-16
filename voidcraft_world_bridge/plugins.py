@@ -28,14 +28,18 @@ supports 3.10. A corrupt or missing file loads nothing rather than failing.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+from voidcraft_world_bridge.policy import CallerPolicy
 
 PLUGIN_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 PLUGIN_PATH_RE = re.compile(r"^/plugin/([a-z0-9][a-z0-9-]{0,31})(/.*)?$")
@@ -99,7 +103,7 @@ def discover_plugin_dirs(env: Mapping[str, str],
     neither configured (or a corrupt config) → no plugins, never an error."""
     raw = env.get(env_var)
     if raw:
-        return [Path(p).expanduser() for p in raw.split(":") if p.strip()]
+        return [Path(p).expanduser() for p in raw.split(os.pathsep) if p.strip()]
     path = config_path or DEFAULT_CONFIG_PATH
     try:
         data = json.loads(path.read_text())
@@ -112,7 +116,7 @@ def discover_plugin_dirs(env: Mapping[str, str],
 
 
 def load_plugins(dirs: list[Path], context: PluginContext,
-                 preloaded: dict[str, Plugin] | None = None) -> dict[str, Plugin]:
+                 preloaded: dict[str, Plugin] | None = None) -> PluginRegistry:
     """Import each plugin dir's entry module and build the name → plugin registry.
 
     ANY failure (missing entry, bad name, import error, create_plugin raising)
@@ -120,7 +124,7 @@ def load_plugins(dirs: list[Path], context: PluginContext,
     because of a plugin. Duplicate names: first wins, and `preloaded` (the
     built-ins) come first.
     """
-    registry: dict[str, Plugin] = dict(preloaded or {})
+    registry = PluginRegistry(preloaded or {})
     for directory in dirs:
         try:
             entry = directory / ENTRY_MODULE
@@ -135,7 +139,7 @@ def load_plugins(dirs: list[Path], context: PluginContext,
             # still be uniquely named — two plugins sharing one share sys.modules.
             if str(directory) not in sys.path:
                 sys.path.append(str(directory))
-            module_name = "bridge_plugin_" + re.sub(r"[^a-z0-9]+", "_", directory.name.lower())
+            module_name = plugin_module_name(directory)
             spec = importlib.util.spec_from_file_location(module_name, entry)
             if spec is None or spec.loader is None:
                 raise ImportError(f"cannot load {entry}")
@@ -146,10 +150,16 @@ def load_plugins(dirs: list[Path], context: PluginContext,
             if not isinstance(name, str) or not PLUGIN_NAME_RE.fullmatch(name):
                 raise ValueError(f"invalid PLUGIN_NAME: {name!r}")
             if name in registry:
+                registry.diagnostics.append({"plugin": name, "state": "skipped", "reason": "duplicate_name"})
                 context.log(f"bridge: plugin '{name}' already loaded — skipping {directory}")
                 continue
-            registry[name] = module.create_plugin(context)
+            plugin = module.create_plugin(context)
+            validate_plugin(plugin, name)
+            registry[name] = plugin
+            registry.diagnostics.append({"plugin": name, "state": "loaded"})
         except Exception as exc:  # noqa: BLE001 — a broken plugin must never stop the bridge
+            registry.diagnostics.append({"entry": directory.name, "state": "failed",
+                                         "error": type(exc).__name__})
             context.log(
                 f"bridge: WARNING — plugin at {directory} failed to load:"
                 f" {type(exc).__name__}: {exc}"
@@ -205,6 +215,14 @@ def dispatch_plugin(registry: Mapping[str, Plugin] | None, method: str, name: st
     if plugin is None:
         return 404, {"error": f"unknown plugin: {name}"}
     try:
+        policy = getattr(plugin, "request_policy", None)
+        if policy is not None:
+            if not isinstance(policy, CallerPolicy):
+                raise TypeError("request_policy must be CallerPolicy")
+            refusal = policy.refusal(headers)
+            if refusal is not None:
+                return 403, {"error": refusal.message, "code": refusal.code,
+                             "allowed_origins": list(refusal.allowed_origins)}
         handle_request = getattr(plugin, "handle_request", None)
         if callable(handle_request):
             lowered = {str(k).lower(): v for k, v in (headers or {}).items()}
@@ -215,12 +233,20 @@ def dispatch_plugin(registry: Mapping[str, Plugin] | None, method: str, name: st
             response = plugin.handle_post(subpath, query, body)
     except Exception as exc:  # noqa: BLE001 — a plugin bug must never kill the bridge
         return 500, {"error": f"plugin '{name}' error: {type(exc).__name__}"}
+    if not (isinstance(response, tuple) and response and type(response[0]) is int
+            and 200 <= response[0] <= 599):
+        return 500, {"error": f"plugin '{name}' returned a malformed response"}
     if (isinstance(response, tuple) and len(response) == 2
             and isinstance(response[0], int) and isinstance(response[1], dict)):
+        try:
+            json.dumps(response[1], allow_nan=False)
+        except (ValueError, TypeError, RecursionError):
+            return 500, {"error": f"plugin '{name}' returned invalid JSON"}
         return response
     if (isinstance(response, tuple) and len(response) == 3
             and isinstance(response[0], int) and isinstance(response[1], (bytes, bytearray))
-            and isinstance(response[2], str)):
+            and isinstance(response[2], str) and response[2].isascii()
+            and not any(c in response[2] for c in "\r\n")):
         return response
     return 500, {"error": f"plugin '{name}' returned a malformed response"}
 
@@ -234,4 +260,58 @@ def plugin_routes(registry: Mapping[str, Plugin] | None) -> dict:
         except Exception:  # noqa: BLE001 — advertisement must never break /snapshot
             routes = []
         advertised[name] = {"routes": routes}
+        operations = getattr(plugin, "operations", None)
+        if callable(operations):
+            try:
+                data = operations()
+                json.dumps(data, allow_nan=False)
+                advertised[name]["operations"] = data
+            except Exception:  # noqa: BLE001 — optional metadata must not break discovery
+                pass
     return advertised
+
+
+class PluginRegistry(dict[str, Plugin]):
+    """A dict-compatible registry with safe, additive startup diagnostics."""
+
+    def __init__(self, plugins: Mapping[str, Plugin]) -> None:
+        super().__init__(plugins)
+        self.diagnostics: list[dict] = []
+
+
+def validate_plugin(plugin: object, name: str) -> None:
+    """Validate structure without invoking route handlers or doing their work."""
+    if not isinstance(name, str) or PLUGIN_NAME_RE.fullmatch(name) is None:
+        raise ValueError("invalid plugin name")
+    if getattr(plugin, "name", None) != name:
+        raise ValueError("plugin.name must match PLUGIN_NAME")
+    if not callable(getattr(plugin, "routes", None)):
+        raise TypeError("plugin must define routes()")
+    if not callable(getattr(plugin, "handle_request", None)) and not all(
+        callable(getattr(plugin, method, None)) for method in ("handle_get", "handle_post")
+    ):
+        raise TypeError("plugin must define handle_request or both handle_get and handle_post")
+    routes = getattr(plugin, "routes")()
+    if not isinstance(routes, list) or not all(
+        isinstance(route, str) and (route == f"/plugin/{name}" or route.startswith(f"/plugin/{name}/")) for route in routes
+    ):
+        raise ValueError("routes must be a list within the plugin's mount")
+    policy = getattr(plugin, "request_policy", None)
+    if policy is not None and not isinstance(policy, CallerPolicy):
+        raise TypeError("request_policy must be CallerPolicy")
+
+
+def close_plugins(registry: Mapping[str, Plugin], log: Callable[[str], None] = print) -> None:
+    """Close owned resources. A failing cleanup never prevents other cleanups."""
+    for name, plugin in registry.items():
+        try:
+            close = getattr(plugin, "close", None)
+            if callable(close):
+                close()
+        except Exception as exc:  # noqa: BLE001 — cleanup is isolated per plugin
+            log(f"bridge: plugin '{name}' cleanup failed: {type(exc).__name__}")
+
+
+def plugin_module_name(directory: Path) -> str:
+    """Stable identity per absolute entry directory, including equal basenames."""
+    return "bridge_plugin_" + hashlib.sha256(str(directory.resolve()).encode()).hexdigest()[:16]

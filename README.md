@@ -103,8 +103,8 @@ A plugin module defines `PLUGIN_NAME` and `create_plugin(context)`, returning an
 with `routes()`, `handle_get(subpath, query)` and `handle_post(subpath, query, body)`.
 Handlers return `(status, dict)` for JSON or `(status, bytes, content_type)` for a raw
 page. POST bodies are capped at 4 KB unless the plugin sets `max_body_bytes`. A plugin that
-fails to load is skipped, and a handler that raises becomes a `500`; a plugin can never take
-the bridge down. Full contract: `voidcraft_world_bridge/plugins.py`.
+fails to load is skipped, and a handler that raises becomes a `500`; handler failures are isolated. Plugins are trusted Python code in the same process;
+this is not a sandbox. Full contract: `voidcraft_world_bridge/plugins.py`.
 
 A complete, runnable one to copy:
 [`examples/hello-plugin`](https://github.com/voidcraft-world/voidcraft-world-bridge/tree/main/examples/hello-plugin)
@@ -137,3 +137,39 @@ VOIDCRAFT_BRIDGE_ALLOWED_HOSTS=mymac.tailXXXX.ts.net voidcraft-world-bridge
 ```
 
 Never use `tailscale funnel` or a public tunnel: that publishes your bridge to the internet.
+
+## Optional plugin SDK
+
+Existing plugins continue to work. New plugins can import these stdlib-only public modules:
+
+| Module | Purpose |
+| --- | --- |
+| `policy` | `CallerPolicy`: optional stricter origins, local hosts and proxy/no-cors restrictions; assign it to `plugin.request_policy` |
+| `routing` | `Route(method, path, handler)` and `RoutedPlugin(name, routes)` generate dispatch and discovery from one table |
+| `services` | `ManagedService`: start a loopback child, probe readiness, back off after failure, stop after idle time, and close owned resources |
+| `jobs` | `BackgroundJob` rejects overlapping work; `JobStore` queues work with configurable pending/retained limits |
+| `testing` | `PluginClient` validates and exercises a plugin without sockets |
+
+Route handlers take `(query, body)` and return the existing response tuples. `operations` in
+`/snapshot.plugins[name]` adds method/path/description metadata; `routes` keeps its old shape.
+Caller policies can only narrow the host guards. They are not authentication of local processes.
+
+A plugin owning resources should implement `close()`. `make_server()` calls it on server close;
+embedding hosts constructing their own server must call `close_plugins()` themselves. A background
+callable cannot be forcibly cancelled: both job helpers reject new submissions on close, and accepted
+work drains while the process remains alive. Detached durable jobs stay outside these helpers.
+
+`ManagedService` accepts trusted command/environment callbacks, a log path, and a readiness predicate.
+The child must bind loopback and verify the supplied per-spawn key. No command comes from an HTTP body.
+Call its `close()` from your plugin's `close()`; request bodies and credentials are never logged by it.
+
+Check a trusted plugin before starting the server:
+
+```bash
+voidcraft-world-bridge check-plugin ./examples/hello-plugin
+```
+
+This imports the plugin and calls its factory and `routes()`, then closes it; it is not a sandbox.
+Startup failures are reported in `plugin_diagnostics` on `/snapshot` without absolute paths or exception
+messages. Diagnostic details stay in the local startup log. The structural checker does not invoke
+application handlers or test application semantics; use `PluginClient` for those tests.
