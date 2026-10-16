@@ -24,6 +24,7 @@ from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.guards import host_allowed, is_no_cors_browser_request, origin_allowed
 from voidcraft_world_bridge.plugins import (
     Plugin,
+    close_plugins,
     dispatch_plugin,
     parse_plugin_path,
     plugin_body_limit,
@@ -76,6 +77,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "bridge": bridge_block(),
             # Omitted when none, so a client reads absence as "no plugins".
             **({"plugins": advertised} if advertised else {}),
+            **({"plugin_diagnostics": self.plugins.diagnostics} if hasattr(self.plugins, "diagnostics") else {}),
         }
 
     # --- guards -------------------------------------------------------------
@@ -295,7 +297,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         limit = plugin_body_limit(self.plugins, name, MAX_BODY_BYTES)
         length = self._content_length()
         body: dict | None = None
-        if length is None or length > limit:
+        if length is None or length < 0 or length > limit:
             self._send_json(400, {"error": "bad content length"})
             return
         if length > 0:
@@ -318,11 +320,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 def build_handler(plugins: dict[str, Plugin] | None = None) -> type[BridgeHandler]:
     """A handler class bound to one plugin registry."""
-    return type("Handler", (BridgeHandler,), {"plugins": dict(plugins or {})})
+    return type("Handler", (BridgeHandler,), {"plugins": plugins if plugins is not None else {}})
 
 
 def make_server(port: int, handler: type[BaseHTTPRequestHandler]) -> ThreadingHTTPServer:
     """Bind loopback ONLY. There is no flag to bind anything wider: the guards
     assume the network cannot reach this port, and a LAN bind would hand every
     device on the network the local model. Raises OSError when the port is taken."""
-    return ThreadingHTTPServer((LOOPBACK, port), handler)
+    class PluginServer(ThreadingHTTPServer):
+        _plugins_closed = False
+
+        def server_close(self) -> None:
+            try:
+                super().server_close()
+            finally:
+                if not self._plugins_closed:
+                    self._plugins_closed = True
+                    close_plugins(getattr(handler, "plugins", {}))
+
+    return PluginServer((LOOPBACK, port), handler)

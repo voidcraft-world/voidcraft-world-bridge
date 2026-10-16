@@ -48,13 +48,18 @@ class QueueFull(Exception):
 
 class JobStore:
     def __init__(self, runner: Runner, *, clock: Callable[[], float] = time.time,
-                 start_worker: bool = True) -> None:
+                 start_worker: bool = True, max_pending: int = MAX_PENDING,
+                 max_kept: int = MAX_KEPT) -> None:
+        if max_pending < 1 or max_kept < 1:
+            raise ValueError("job limits must be positive")
+        self._max_pending, self._max_kept = max_pending, max_kept
+        self._closed = False
         self._runner = runner
         self._clock = clock
         self._lock = threading.Lock()
         self._jobs: dict[str, dict] = {}
         self._order: list[str] = []
-        self._pending: queue.Queue[str] = queue.Queue()
+        self._pending: queue.Queue[str | None] = queue.Queue()
         if start_worker:
             threading.Thread(target=self._work_forever, name="local-llm-worker", daemon=True).start()
 
@@ -62,7 +67,7 @@ class JobStore:
     def submit(self, request: dict) -> dict:
         with self._lock:
             waiting = sum(1 for j in self._jobs.values() if j["state"] == QUEUED)
-            if waiting >= MAX_PENDING:
+            if self._closed or waiting >= self._max_pending:
                 raise QueueFull()
             job_id = secrets.token_hex(8)
             job = {"id": job_id, "state": QUEUED, "created_at": self._clock(),
@@ -73,7 +78,7 @@ class JobStore:
             self._order.append(job_id)
             self._forget_oldest_finished()
             snapshot = self._public(job)
-        self._pending.put(job_id)
+            self._pending.put(job_id)
         return snapshot
 
     def get(self, job_id: str) -> dict | None:
@@ -92,13 +97,24 @@ class JobStore:
             job_id = self._pending.get_nowait()
         except queue.Empty:
             return False
+        if job_id is None:
+            return False
         self._run(job_id)
         return True
+
+    def close(self) -> None:
+        """Drain accepted work and stop the worker; reject subsequent submissions."""
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                self._pending.put(None)
 
     # -- internals ------------------------------------------------------------
     def _work_forever(self) -> None:
         while True:
             job_id = self._pending.get()
+            if job_id is None:
+                return
             self._run(job_id)
 
     def _run(self, job_id: str) -> None:
@@ -122,7 +138,7 @@ class JobStore:
             job["request"] = {}  # the prompt is the user's content; do not keep it past the answer
 
     def _forget_oldest_finished(self) -> None:
-        while len(self._order) > MAX_KEPT:
+        while len(self._order) > self._max_kept:
             victim = next((jid for jid in self._order if self._jobs[jid]["state"] in (DONE, FAILED)), None)
             if victim is None:
                 return
