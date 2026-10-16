@@ -285,15 +285,17 @@ def validate_plugin(plugin: object, name: str) -> None:
         raise ValueError("invalid plugin name")
     if getattr(plugin, "name", None) != name:
         raise ValueError("plugin.name must match PLUGIN_NAME")
-    if not callable(getattr(plugin, "routes", None)):
+    routes_method = getattr(plugin, "routes", None)
+    if not callable(routes_method):
         raise TypeError("plugin must define routes()")
     if not callable(getattr(plugin, "handle_request", None)) and not all(
         callable(getattr(plugin, method, None)) for method in ("handle_get", "handle_post")
     ):
         raise TypeError("plugin must define handle_request or both handle_get and handle_post")
-    routes = getattr(plugin, "routes")()
+    routes = routes_method()
     if not isinstance(routes, list) or not all(
-        isinstance(route, str) and (route == f"/plugin/{name}" or route.startswith(f"/plugin/{name}/")) for route in routes
+        isinstance(route, str) and (route == f"/plugin/{name}" or route.startswith(f"/plugin/{name}/"))
+        for route in routes
     ):
         raise ValueError("routes must be a list within the plugin's mount")
     policy = getattr(plugin, "request_policy", None)

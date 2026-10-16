@@ -59,7 +59,7 @@ class ManagedService:
                  idle_stop_seconds: float = 600, start_timeout_seconds: float = 600,
                  backoff_seconds: float = 30, poll_seconds: float = 0.5,
                  clock: Callable[[], float] = time.monotonic,
-                 log: Callable[[str], None] = lambda message: None) -> None:
+                 log: Callable[[str], None] = lambda _message: None) -> None:
         self._command, self._environment = command, environment
         self._log_path, self._label, self._cwd = log_path, label, cwd
         self._ready = ready
