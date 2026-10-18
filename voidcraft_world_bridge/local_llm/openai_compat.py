@@ -84,7 +84,7 @@ def version(base: str, opener: Opener | None = None) -> str | None:  # noqa: ARG
 
 
 def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temperature: float,
-         response_format: dict | str | None, think: bool | None,  # noqa: ARG001 — see the module note
+         response_format: dict | str | None, think: bool | str | None,  # noqa: ARG001 — see the module note
          tools: list[dict] | None = None, num_ctx: int | None = None,  # noqa: ARG001 — see the module note
          seed: int | None = None, opener: Opener | None = None) -> dict:
     """One non-streaming chat turn, answered in the same shape as `ollama.chat`."""

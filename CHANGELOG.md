@@ -14,6 +14,11 @@ clients depend on are additive-only, so a breaking change is a major version.
 - Clean up rejected factory results and invalidate stopped service endpoints. Keep child HTTP traffic
   direct to loopback, without proxy or redirect credential forwarding.
 
+### Added
+
+- `POST /chat` takes `think` as a reasoning level (`"low"`, `"medium"`, `"high"`) as well as a boolean, and
+  passes it to Ollama as given. A model that cannot turn reasoning off (gpt-oss ignores `false`) needs the level.
+
 ## [0.1.1] - 2026-10-08
 
 ### Added

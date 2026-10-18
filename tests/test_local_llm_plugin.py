@@ -87,6 +87,26 @@ def test_a_model_without_thinking_is_retried_once_without_the_field():
     assert len(chats) == 2 and "think" not in chats[1]
 
 
+def test_a_think_level_goes_to_ollama_as_given():
+    # A model that cannot turn reasoning off (gpt-oss) reads `think` as a level only.
+    fake = FakeOllama()
+    p = plugin(fake)
+    _, body = p.handle_post("/chat", {}, {**CHAT, "think": "low"})
+    p._jobs.run_next()
+    _, job = p.handle_get("/job", {"id": [body["job_id"]]})
+    assert job["state"] == jobs_mod.DONE
+    sent = next(b for path, b in fake.requests if path == "/api/chat")
+    assert sent["think"] == "low"
+
+
+def test_a_think_that_is_neither_a_boolean_nor_a_level_is_refused():
+    p = plugin(FakeOllama())
+    for bad in ("none", "LOW", 0, 1.5, ["low"]):
+        status, body = p.handle_post("/chat", {}, {**CHAT, "think": bad})
+        assert status == 400, f"think={bad!r} should be refused"
+        assert "think must be a boolean or one of low, medium, high" in str(body)
+
+
 def test_a_named_model_that_is_not_installed_fails_the_job_with_the_pull_command():
     p = plugin(FakeOllama())
     _, body = p.handle_post("/chat", {}, {**CHAT, "model": "qwen3.8"})
