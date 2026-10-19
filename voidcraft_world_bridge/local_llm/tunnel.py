@@ -15,6 +15,10 @@
 - `<keep-awake>`: the remote command the session holds open. It keeps the other
   machine from idle-sleeping exactly while the tunnel is up, and no longer —
   `caffeinate -i` on macOS, `systemd-inhibit` on Linux, found once by `uname -s`.
+- The command it holds is `cat`, reading ssh's stdin — a pipe only this bridge
+  holds open. If the bridge dies by any means (a SIGKILL skips every cleanup),
+  the pipe closes, `cat` reads EOF and exits, and the session ends with it. A
+  tunnel can never outlive its bridge and keep the other machine awake forever.
 
 ── LIFECYCLE ─────────────────────────────────────────────────────────────────
 Started lazily (the first `/status` or question that needs the host), on a
@@ -43,10 +47,10 @@ IDLE_STOP_SECONDS = 30 * 60
 BACKOFF_SECONDS = (5.0, 15.0, 60.0)
 
 KEEP_AWAKE = {
-    "Darwin": ["caffeinate", "-i"],
-    "Linux": ["systemd-inhibit", "--what=sleep:idle", "--why=voidcraft-local-llm", "sleep", "infinity"],
+    "Darwin": ["caffeinate", "-i", "cat"],
+    "Linux": ["systemd-inhibit", "--what=sleep:idle", "--why=voidcraft-local-llm", "cat"],
 }
-HOLD_OPEN = ["sleep", "infinity"]
+HOLD_OPEN = ["cat"]
 """Any other system: hold the session open without keeping anything awake."""
 
 SSH_OPTIONS = (
@@ -189,7 +193,8 @@ class SshTunnel:
             argv = [self._ssh_binary(), *SSH_OPTIONS,
                     "-L", f"{LOOPBACK}:{port}:{LOOPBACK}:{self.remote_port}",
                     "--", self.alias, *keep_awake_command(system)]
-            proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            # stdin=PIPE is the lifeline (module note): never written, closed only by our exit.
+            proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE, start_new_session=True)
         except (OSError, ValueError, subprocess.SubprocessError) as err:
             with self._lock:
@@ -234,5 +239,6 @@ def _terminate(proc: subprocess.Popen) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
-    if proc.stderr is not None:
-        proc.stderr.close()
+    for stream in (proc.stdin, proc.stderr):
+        if stream is not None:
+            stream.close()

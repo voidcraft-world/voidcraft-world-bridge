@@ -17,7 +17,7 @@ from voidcraft_world_bridge.local_llm import tunnel as tunnel_mod
 from voidcraft_world_bridge.local_llm.tunnel import DOWN, UP, SshTunnel, keep_awake_command
 
 FAKE_SSH = """\
-import json, os, signal, socket, sys, time
+import json, os, signal, socket, sys, threading, time
 argv = sys.argv[1:]
 log = os.environ["FAKE_SSH_LOG"]
 with open(log, "a") as stream:
@@ -41,6 +41,8 @@ if mode == "dies":
     sys.stderr.write("client_loop: send disconnect: Broken pipe\\n")
     sys.exit(255)
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+# Like ssh running `cat` remotely: stdin's EOF ends the remote command, and the session.
+threading.Thread(target=lambda: (sys.stdin.buffer.read(), os._exit(0)), daemon=True).start()
 while True:
     time.sleep(0.1)
 """
@@ -69,10 +71,11 @@ def wait_for(predicate, timeout=5.0):
     return False
 
 
-def test_keep_awake_follows_the_other_machines_system():
-    assert keep_awake_command("Darwin\n") == ["caffeinate", "-i"]
+def test_keep_awake_follows_the_other_machines_system_and_always_holds_cat():
+    assert keep_awake_command("Darwin\n") == ["caffeinate", "-i", "cat"]
     assert keep_awake_command("Linux")[0] == "systemd-inhibit"
-    assert keep_awake_command("FreeBSD") == ["sleep", "infinity"]
+    assert keep_awake_command("FreeBSD") == ["cat"]
+    assert all(keep_awake_command(s)[-1] == "cat" for s in ("Darwin", "Linux", "FreeBSD"))
 
 
 def test_the_tunnel_opens_a_loopback_forward_and_holds_the_host_awake(fake_ssh):
@@ -108,7 +111,7 @@ def test_the_system_is_detected_once_per_tunnel(fake_ssh, monkeypatch):
         assert tunnel.wait_up(timeout=10)
         unames = [argv for argv in calls() if argv[-2:] == ["uname", "-s"]]
         assert len(unames) == 1
-        assert calls()[-1][-2:] == ["caffeinate", "-i"]
+        assert calls()[-1][-3:] == ["caffeinate", "-i", "cat"]
     finally:
         tunnel.close()
 
@@ -142,3 +145,18 @@ def test_an_ssh_that_is_not_installed_is_down_not_a_crash(tmp_path):
     tunnel = SshTunnel("studio", 11434, ssh=str(tmp_path / "no-such-ssh"))
     assert tunnel.wait_up(timeout=5) is None
     assert tunnel.snapshot()[2].startswith("ssh could not connect")
+
+
+def test_a_tunnel_cannot_outlive_its_bridge(fake_ssh):
+    """The bridge dying closes ssh's stdin; that alone must end the session."""
+    ssh, _ = fake_ssh
+    tunnel = SshTunnel("studio", 11434, ssh=ssh)
+    try:
+        assert tunnel.wait_up(timeout=10) is not None
+        proc = tunnel._proc
+        assert proc is not None and proc.stdin is not None
+        proc.stdin.close()  # what the OS does to the pipe when the bridge process exits
+        assert wait_for(lambda: proc.poll() is not None)
+        assert wait_for(lambda: tunnel.snapshot()[0] == DOWN)
+    finally:
+        tunnel.close()
