@@ -67,6 +67,16 @@ PROBED = (
 )
 
 
+def on_host(kind: str, port: int | None, host_name: str) -> Runtime:
+    """Another machine's server, reached through its tunnel's local port (`tunnel.py`).
+
+    The URL is loopback all the same: the forward is what crosses the network.
+    """
+    adapter: ModuleType = openai_compat if kind == openai_compat.KIND else ollama
+    base = f"http://127.0.0.1:{port or 0}" + ("/v1" if adapter is openai_compat else "")
+    return Runtime(adapter, base, f"{adapter.LABEL} on {host_name}")
+
+
 def candidates() -> tuple[Runtime, ...]:
     """The servers to ask, in order. One entry when a URL is configured."""
     explicit = openai_compat.configured_url()

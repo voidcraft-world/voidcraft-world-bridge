@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import urllib.error
+import urllib.parse
 
 
 class _Response:
@@ -36,7 +37,7 @@ class FakeOllama:
     def __call__(self, request, timeout=None):
         if self.down:
             raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
-        path = request.full_url.split("11434", 1)[-1] if "11434" in request.full_url else request.full_url
+        path = urllib.parse.urlsplit(request.full_url).path
         body = json.loads(request.data) if request.data else None
         self.requests.append((path, body))
         if path == "/api/tags":
@@ -56,7 +57,9 @@ class FakeOllama:
                 "total_duration": 4_200_000_000,
                 "load_duration": 1_000_000_000,
                 "prompt_eval_count": 120,
+                "prompt_eval_duration": 600_000_000,
                 "eval_count": 30,
+                "eval_duration": 2_000_000_000,
             }).encode())
         raise _http_error(404, "not found")
 

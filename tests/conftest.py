@@ -9,6 +9,8 @@ RUNTIME_ENV = ("VOIDCRAFT_LOCAL_LLM_URL", "VOIDCRAFT_OLLAMA_URL", "VOIDCRAFT_LOC
 
 
 @pytest.fixture(autouse=True)
-def _stock_runtime_env(monkeypatch):
+def _stock_runtime_env(monkeypatch, tmp_path):
     for name in RUNTIME_ENV:
         monkeypatch.delenv(name, raising=False)
+    # No other compute hosts unless a test writes some: never the developer's own hosts.json.
+    monkeypatch.setenv("VOIDCRAFT_LOCAL_LLM_HOSTS", str(tmp_path / "hosts.json"))

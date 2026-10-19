@@ -29,7 +29,7 @@ CHAT = {"system": "You answer questions.", "user": "What is in this world?", "th
 
 def test_routes_are_namespaced():
     assert plugin(FakeOllama()).routes() == [
-        "/plugin/local-llm/status", "/plugin/local-llm/job", "/plugin/local-llm/chat",
+        "/plugin/local-llm/status", "/plugin/local-llm/job", "/plugin/local-llm/chat", "/plugin/local-llm/hosts",
     ]
 
 

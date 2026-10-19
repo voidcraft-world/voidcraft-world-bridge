@@ -13,28 +13,37 @@ configures those differently. The bridge is one door, with one allowlist.
 
 Which server answers — Ollama, LM Studio, llama.cpp, any OpenAI-compatible one —
 is found by probing (`runtimes.py`). A body with an `agent` field goes to an
-agent runtime the host registered instead (`agents.py`).
+agent runtime the host registered instead (`agents.py`). Other machines the
+user named (`hosts.py`) answer too, each on its own queue, reached over SSH
+(`tunnel.py`); `/status` lists them under `hosts`, and `POST /hosts` edits them.
 
 ── WHAT THIS PLUGIN WILL NOT DO ─────────────────────────────────────────────
 - PULL a model. A named model must already be installed (`models.py`).
 - KEEP a prompt. A job drops its request once answered (`jobs.py`).
 - Reach anything but a model server on this machine (or the one URL the user
-  configured) — or, for an agent, the runtime the host registered.
+  configured), a model server on another machine's loopback through an SSH
+  alias the user configured — or, for an agent, the runtime the host registered.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections import deque
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import NamedTuple
 
+from voidcraft_world_bridge.local_llm import hosts as hosts_mod
 from voidcraft_world_bridge.local_llm import jobs as jobs_mod
 from voidcraft_world_bridge.local_llm import models as models_mod
 from voidcraft_world_bridge.local_llm import runtimes as runtimes_mod
 from voidcraft_world_bridge.local_llm.agents import AgentRefused, AgentRuntime
 from voidcraft_world_bridge.local_llm.transport import RuntimeDown, RuntimeRefused
+from voidcraft_world_bridge.local_llm.tunnel import NONE, STARTING, SshTunnel
+from voidcraft_world_bridge.policy import CallerPolicy
 from voidcraft_world_bridge.shape import typed
 
 PLUGIN_NAME = "local-llm"
@@ -74,7 +83,7 @@ reused. The page polls `/status` when it opens and a job resolves its model on
 every run; neither needs a fresher list than "installed in the last ten
 seconds"."""
 
-UNKNOWN_ROUTE = {"error": "unknown route — GET /status, GET /job?id=, POST /chat"}
+UNKNOWN_ROUTE = {"error": "unknown route — GET /status, GET /job?id=, POST /chat, POST /hosts"}
 
 
 class Installed(NamedTuple):
@@ -85,6 +94,81 @@ class Installed(NamedTuple):
     models: list[dict] | None
     runtime_version: str | None
     error: str | None
+
+
+SPEED_SAMPLES = 8
+"""Recent answers per host that `/status` averages into tok/s. Few enough that a
+model swap shows within a match, enough that one cold start does not dominate."""
+
+TUNNEL_STARTING_MESSAGE = "connecting over SSH"
+
+HOSTS_POLICY = CallerPolicy(loopback_only=True, reject_proxy=True, reject_no_cors=True,
+                            subject="host list")
+"""Adding a host makes this machine open SSH sessions, so the route that edits
+the list answers only on this machine's own loopback name, never through a
+proxy, and never to a no-cors browser request. The host's Origin guard still
+runs first (`server.py`)."""
+
+
+class Speed:
+    """Rolling prefill and output tok/s for one host, from the answers it gave."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._samples: deque[tuple[int, float | None, int, float | None]] = deque(maxlen=SPEED_SAMPLES)
+
+    def record(self, timings: dict | None) -> None:
+        if timings:
+            with self._lock:
+                self._samples.append((timings["prompt_tokens"], timings["prompt_s"],
+                                      timings["output_tokens"], timings["output_s"]))
+
+    def rates(self) -> tuple[float | None, float | None]:
+        """(output tok/s, prefill tok/s); None until a sample has that half."""
+        with self._lock:
+            samples = list(self._samples)
+        return (_rate([(o, os_) for _, _, o, os_ in samples]),
+                _rate([(p, ps) for p, ps, _, _ in samples]))
+
+
+def _rate(pairs: list[tuple[int, float | None]]) -> float | None:
+    tokens = sum(t for t, s in pairs if s and t > 0)
+    seconds = sum(s for t, s in pairs if s and t > 0)
+    return round(tokens / seconds, 1) if seconds > 0 else None
+
+
+def _timings(result: dict) -> dict | None:
+    """What one answer says about its host's speed. Ollama and llama-server
+    report prefill and output separately; any other server only its wall time,
+    which stands in for output (a slight under-estimate of the rate)."""
+    prompt_ms, output_ms = result.get("prompt_ms"), result.get("output_ms")
+    if output_ms is None:
+        output_ms = result.get("total_ms")
+    if output_ms is None:
+        return None
+    return {
+        "prompt_tokens": int(result.get("prompt_tokens") or 0),
+        "prompt_s": None if prompt_ms is None else prompt_ms / 1000,
+        "output_tokens": int(result.get("output_tokens") or 0),
+        "output_s": output_ms / 1000,
+    }
+
+
+class Lane:
+    """One machine that answers questions: its queue, its speed, and — for
+    another machine — the host entry and the tunnel that reaches it."""
+
+    def __init__(self, name: str, store: jobs_mod.JobStore, remote: hosts_mod.RemoteHost | None = None,
+                 tunnel: SshTunnel | None = None) -> None:
+        self.name, self.store, self.remote, self.tunnel = name, store, remote, tunnel
+        self.speed = Speed()
+        self.lock = threading.Lock()
+        # (stamp, tunnel port the list was read through, what it found).
+        self.cache: tuple[float, int | None, Installed | None] = (0.0, None, None)
+
+    @property
+    def is_local(self) -> bool:
+        return self.remote is None
 
 
 class LocalLlmPlugin:
@@ -99,26 +183,55 @@ class LocalLlmPlugin:
     only lets the body in."""
 
     def __init__(self, context, *, opener=None, start_worker: bool = True,
-                 agent_runtimes: Iterable[AgentRuntime] = ()) -> None:
+                 agent_runtimes: Iterable[AgentRuntime] = (),
+                 hosts_path: Path | None = None, ssh_config_path: Path | None = None,
+                 tunnel_factory: Callable[[hosts_mod.RemoteHost], SshTunnel] | None = None) -> None:
         self._context = context
         self._opener = opener
+        self._start_worker = start_worker
+        self._hosts_path = hosts_path
+        self._ssh_config_path = ssh_config_path
+        self._tunnel_factory = tunnel_factory or _ssh_tunnel
         self._models_lock = threading.Lock()
         # (stamp, what the probe found) — see _installed.
         self._models_cache: tuple[float, Installed | None] = (0.0, None)
-        self._jobs = jobs_mod.JobStore(self._run_chat, start_worker=start_worker)
+        self._jobs = jobs_mod.JobStore(functools.partial(self._run_chat_on, hosts_mod.LOCAL),
+                                       start_worker=start_worker, host=hosts_mod.LOCAL)
+        self._lanes_lock = threading.Lock()
+        self._lanes: dict[str, Lane] = {hosts_mod.LOCAL: Lane(hosts_mod.LOCAL, self._jobs)}
+        # A removed host's store, kept so its finished jobs still answer /job.
+        self._retired: list[jobs_mod.JobStore] = []
+        for remote in hosts_mod.load_hosts(hosts_path):
+            self._add_lane(remote)
         # Agents get their own queue and worker: a remote turn shares no memory
         # bandwidth with the local model, so it must not wait behind a local
         # generation.
         self._agent_runtimes: dict[str, AgentRuntime] = {runtime.name: runtime for runtime in agent_runtimes}
-        self._agent_jobs = jobs_mod.JobStore(self._run_agent, start_worker=start_worker)
+        self._agent_jobs = jobs_mod.JobStore(self._run_agent, start_worker=start_worker, host=hosts_mod.LOCAL)
 
     def close(self) -> None:
-        self._jobs.close()
+        for lane in self._lane_list():
+            lane.store.close()
+            if lane.tunnel is not None:
+                lane.tunnel.close()
         self._agent_jobs.close()
 
     def routes(self) -> list[str]:
         base = f"/plugin/{self.name}"
-        return [f"{base}/status", f"{base}/job", f"{base}/chat"]
+        return [f"{base}/status", f"{base}/job", f"{base}/chat", f"{base}/hosts"]
+
+    # -- dispatch -------------------------------------------------------------
+    def handle_request(self, method: str, subpath: str, query: dict[str, list[str]],
+                       body: dict | None, headers: dict[str, str]) -> tuple:
+        """The host prefers this entry point; it is here only so `/hosts` can read
+        the request's headers (`HOSTS_POLICY`). Every other route is unchanged."""
+        if subpath == "/hosts":
+            refusal = HOSTS_POLICY.refusal(headers)
+            if refusal is not None:
+                return 403, {"error": refusal.code, "message": refusal.message}
+        if method == "GET":
+            return self.handle_get(subpath, query)
+        return self.handle_post(subpath, query, body)
 
     # -- GET ------------------------------------------------------------------
     def handle_get(self, subpath: str, query: dict[str, list[str]]) -> tuple:
@@ -129,7 +242,7 @@ class LocalLlmPlugin:
             return 200, status
         if subpath == "/job":
             job_id = (query.get("id") or [""])[0]
-            job = (self._jobs.get(job_id) or self._agent_jobs.get(job_id)) if job_id else None
+            job = self._find_job(job_id) if job_id else None
             if job is None:
                 return 404, {"error": "unknown_job"}
             return 200, job
@@ -138,21 +251,156 @@ class LocalLlmPlugin:
     # -- POST -----------------------------------------------------------------
     def handle_post(self, subpath: str, query: dict[str, list[str]],  # noqa: ARG002 — the handler signature is the contract
                     body: dict | None) -> tuple:
+        if subpath == "/hosts":
+            return self._edit_hosts(body)
         if subpath != "/chat":
             return 404, dict(UNKNOWN_ROUTE)
         request, problem = _validate_chat(body, self._agent_runtimes)
         if problem:
             return 400, {"error": "bad_request", "message": problem}
-        store = self._agent_jobs if request.get("agent") else self._jobs
+        if request.get("agent"):
+            store, waiting_for = self._agent_jobs, "the agent"
+        else:
+            lane, refusal = self._route(request)
+            if lane is None:
+                return refusal
+            store = lane.store
+            waiting_for = "the local model" if lane.is_local else f"the model on {lane.name}"
         try:
             job = store.submit(request)
         except jobs_mod.QueueFull:
-            waiting_for = "the agent" if request.get("agent") else "the local model"
             return 429, {"error": "busy",
                          "message": f"{jobs_mod.MAX_PENDING} questions are already waiting for {waiting_for}"}
         return 202, {"job_id": job["id"], **job}
 
+    # -- hosts ----------------------------------------------------------------
+    def _lane_list(self) -> list[Lane]:
+        with self._lanes_lock:
+            return list(self._lanes.values())
+
+    def _add_lane(self, remote: hosts_mod.RemoteHost) -> Lane:
+        store = jobs_mod.JobStore(functools.partial(self._run_chat_on, remote.name),
+                                  start_worker=self._start_worker, host=remote.name)
+        lane = Lane(remote.name, store, remote, self._tunnel_factory(remote))
+        with self._lanes_lock:
+            self._lanes[remote.name] = lane
+        return lane
+
+    def _remotes(self) -> list[hosts_mod.RemoteHost]:
+        return [lane.remote for lane in self._lane_list() if lane.remote is not None]
+
+    def _edit_hosts(self, body: dict | None) -> tuple:
+        """`{"action": "add", "ssh": alias, "name"?, "kind"?, "port"?}` or `{"action": "remove", "name"}`."""
+        body = body if isinstance(body, dict) else {}
+        action = body.get("action")
+        if action == "add":
+            alias = body.get("ssh")
+            problem = hosts_mod.alias_problem(alias) or hosts_mod.alias_problem(body.get("name", alias))
+            if problem:
+                return 400, {"error": "bad_alias", "message": problem}
+            if alias not in hosts_mod.configured_aliases(self._ssh_config_path):
+                return 400, {"error": "bad_alias",
+                             "message": f"no `Host {alias}` line in your SSH config — add one, then run "
+                                        f"`ssh {alias}` once so its key and host key are set up"}
+            remote = hosts_mod.parse_host({k: body[k] for k in ("ssh", "name", "kind", "port") if k in body})
+            if remote is None:
+                return 400, {"error": "bad_request", "message": f"kind must be one of {hosts_mod.KINDS}, "
+                                                                "port 1–65535"}
+            with self._lanes_lock:
+                existing = self._lanes.get(remote.name)
+            if existing is not None and existing.remote != remote:
+                return 400, {"error": "host_exists", "message": f"a host named {remote.name} already exists"}
+            if existing is None:
+                if len(self._remotes()) >= hosts_mod.MAX_HOSTS:
+                    return 400, {"error": "too_many_hosts", "message": f"at most {hosts_mod.MAX_HOSTS} hosts"}
+                lane = self._add_lane(remote)
+                hosts_mod.save_hosts(self._remotes(), self._hosts_path)
+                if lane.tunnel is not None:
+                    lane.tunnel.ensure()
+        elif action == "remove":
+            name = body.get("name")
+            if name == hosts_mod.LOCAL:
+                return 400, {"error": "cannot_remove_local", "message": "this machine is always a host"}
+            with self._lanes_lock:
+                removed = self._lanes.pop(name, None) if isinstance(name, str) else None
+                if removed is not None:
+                    self._retired.append(removed.store)
+                    del self._retired[:-hosts_mod.MAX_HOSTS]
+            if removed is None:
+                return 400, {"error": "host_unknown", "message": f"no host named {name}"}
+            removed.store.close()
+            if removed.tunnel is not None:
+                removed.tunnel.close()
+            hosts_mod.save_hosts(self._remotes(), self._hosts_path)
+        else:
+            return 400, {"error": "bad_request", "message": 'action must be "add" or "remove"'}
+        return 200, {"ok": True, "hosts": [self._host_row(lane) for lane in self._lane_list()]}
+
+    def _route(self, request: dict) -> tuple[Lane | None, tuple]:
+        """Which machine answers. A named host wins; otherwise the least-busy host
+        that has the named model, this machine winning a tie; a question naming no
+        model goes to this machine, whose pick `/status` shows. Nothing suitable →
+        this machine, where the job fails the way it always did (`model_not_installed`)."""
+        lanes = self._lane_list()
+        local = lanes[0]
+        wanted, model = request.get("host"), request.get("model")
+        if wanted is not None:
+            lane = next((lane for lane in lanes if lane.name == wanted), None)
+            if lane is None:
+                return None, (400, {"error": "host_unknown", "message": f"no host named {wanted}"})
+            found = self._installed_for(lane)
+            if found.models is None:
+                return None, (409, {"error": "host_unreachable",
+                                    "message": found.error or f"{wanted} is not answering"})
+            if model and model not in _names(found.models):
+                return None, (409, {"error": "model_not_on_host", "message": f"{model} is not installed on {wanted}"})
+            return lane, ()
+        if len(lanes) == 1 or not model:
+            return local, ()
+        candidates = [lane for lane in lanes
+                      if (found := self._installed_for(lane)).models is not None and model in _names(found.models)]
+        if not candidates:
+            return local, ()
+        return min(candidates, key=lambda lane: (lane.store.load(), not lane.is_local)), ()
+
+    def _find_job(self, job_id: str) -> dict | None:
+        with self._lanes_lock:
+            stores = [lane.store for lane in self._lanes.values()] + self._retired
+        for store in [*stores, self._agent_jobs]:
+            job = store.get(job_id)
+            if job is not None:
+                return job
+        return None
+
     # -- internals ------------------------------------------------------------
+    def _installed_for(self, lane: Lane) -> Installed:
+        return self._installed() if lane.is_local else self._installed_remote(lane)
+
+    def _installed_remote(self, lane: Lane) -> Installed:
+        """Another machine's models, read through its tunnel and cached like `_installed`.
+        A tunnel that is not up yet is reported, not waited for: this runs on a request thread."""
+        assert lane.remote is not None and lane.tunnel is not None
+        state, port, tunnel_error = lane.tunnel.ensure()
+        runtime = runtimes_mod.on_host(lane.remote.kind, port, lane.name)
+        if port is None:
+            detail = TUNNEL_STARTING_MESSAGE if state == STARTING else (tunnel_error or "the tunnel is down")
+            return Installed(runtime, None, None, f"host_unreachable: {detail}")
+        now = time.monotonic()
+        with lane.lock:
+            stamp, cached_port, cached = lane.cache
+            if cached is not None and cached.models is not None and cached_port == port \
+                    and now - stamp < MODELS_TTL_SECONDS:
+                return cached
+        try:
+            found = Installed(runtime, runtime.list_models(self._opener), runtime.version(self._opener), None)
+        except RuntimeDown as err:
+            found = Installed(runtime, None, None, f"runtime_down: {runtime.describe()}: {err}")
+        except RuntimeRefused as err:
+            found = Installed(runtime, None, None, f"runtime_error: {err.message}")
+        with lane.lock:
+            lane.cache = (now, port, found)
+        return found
+
     def _installed(self) -> Installed:
         """The first server that answers, cached for MODELS_TTL_SECONDS; a miss
         (`models` None) is never cached, so the next request probes again.
@@ -190,10 +438,48 @@ class LocalLlmPlugin:
             self._models_cache = (now, found)
         return found
 
+    def _host_row(self, lane: Lane, found: Installed | None = None) -> dict:
+        found = found or self._installed_for(lane)
+        counts = lane.store.counts()
+        tok_s, prefill_tok_s = lane.speed.rates()
+        if lane.tunnel is None:
+            tunnel = NONE
+        else:
+            tunnel, _, _ = lane.tunnel.snapshot()
+        return {
+            "name": lane.name,
+            "local": lane.is_local,
+            "kind": found.runtime.kind,
+            "reachable": found.models is not None,
+            "models": [str(m["name"]) for m in found.models or [] if models_mod.is_chat_model(m)],
+            "queue": counts["queued"] + counts["running"],
+            "running": counts["running"] > 0,
+            "tok_s": tok_s,
+            "prefill_tok_s": prefill_tok_s,
+            "tunnel": tunnel,
+            "error": found.error,
+        }
+
     def _status(self) -> dict:
-        runtime, models, runtime_version, error = self._installed()
+        lanes = self._lane_list()
+        found_by_lane = [(lane, self._installed_for(lane)) for lane in lanes]
+        runtime, models, runtime_version, error = found_by_lane[0][1]
         pinned = os.environ.get(PIN_ENV) or None
         picked = models_mod.pick_model(models or [], pinned)
+        union: list[dict] = []
+        model_hosts: dict[str, list[str]] = {}
+        for lane, found in found_by_lane:
+            for model in found.models or []:
+                if not models_mod.is_chat_model(model):
+                    continue
+                name = str(model["name"])
+                if name not in model_hosts:
+                    union.append(model)
+                model_hosts.setdefault(name, []).append(lane.name)
+        totals = {"queued": 0, "running": 0}
+        for lane in lanes:
+            for key, value in lane.store.counts().items():
+                totals[key] += value
         return {
             "version": STATUS_VERSION,
             "plugin": self.name,
@@ -203,11 +489,13 @@ class LocalLlmPlugin:
             "reachable": models is not None,
             "runtime_version": runtime_version,
             "error": error,
-            "models": [m for m in (models or []) if models_mod.is_chat_model(m)],
+            "models": union,
             "picked_model": picked,
             "pinned_model": pinned,
             "preference": list(models_mod.PREFERENCE),
-            **self._jobs.counts(),
+            **totals,
+            "hosts": [self._host_row(lane, found) for lane, found in found_by_lane],
+            "model_hosts": model_hosts,
         }
 
     def _agents(self) -> list[dict]:
@@ -224,13 +512,25 @@ class LocalLlmPlugin:
         except AgentRefused as refused:
             raise jobs_mod.JobFailure(refused.code, refused.message) from refused
 
-    def _run_chat(self, request: dict) -> dict:
-        runtime, models, _, error = self._installed()
+    def _run_chat_on(self, lane_name: str, request: dict) -> dict:
+        with self._lanes_lock:
+            lane = self._lanes.get(lane_name)
+        if lane is None:
+            raise jobs_mod.JobFailure("host_unknown", f"{lane_name} was removed before this question ran")
+        if lane.tunnel is not None and lane.tunnel.wait_up() is None:
+            _, _, tunnel_error = lane.tunnel.snapshot()
+            raise jobs_mod.JobFailure("host_unreachable", f"{lane.name}: {tunnel_error or 'the tunnel did not open'}")
+        runtime, models, _, error = self._installed_for(lane)
         if models is None:
-            raise jobs_mod.JobFailure("runtime_down", error or f"{runtime.label} is not answering")
-        model, problem = models_mod.resolve_requested(request.get("model"), models,
-                                                      os.environ.get(PIN_ENV) or None)
+            code = "host_unreachable" if not lane.is_local else "runtime_down"
+            raise jobs_mod.JobFailure(code, error or f"{runtime.label} is not answering")
+        # The pin names a model on THIS machine; another host picks from its own list.
+        pinned = (os.environ.get(PIN_ENV) or None) if lane.is_local else None
+        model, problem = models_mod.resolve_requested(request.get("model"), models, pinned)
         if problem == "model_not_installed":
+            if not lane.is_local:
+                raise jobs_mod.JobFailure("model_not_on_host",
+                                          f"{request.get('model')} is not installed on {lane.name}")
             raise jobs_mod.JobFailure(problem, runtime.missing_model_hint(str(request.get("model"))))
         if problem or not model:
             raise jobs_mod.JobFailure("no_model", runtime.no_model_hint)
@@ -241,10 +541,21 @@ class LocalLlmPlugin:
                                   tools=request.get("tools"), num_ctx=request.get("num_ctx"),
                                   seed=request.get("seed"), opener=self._opener)
         except RuntimeDown as err:
-            raise jobs_mod.JobFailure("runtime_down", f"{runtime.label} stopped answering: {err}") from err
+            code = "runtime_down" if lane.is_local else "host_unreachable"
+            raise jobs_mod.JobFailure(code, f"{runtime.label} stopped answering: {err}") from err
         except RuntimeRefused as err:
             raise jobs_mod.JobFailure("runtime_error", err.message) from err
-        return result
+        timings = _timings(result)
+        lane.speed.record(timings)
+        return {**result, "timings": timings}
+
+
+def _ssh_tunnel(remote: hosts_mod.RemoteHost) -> SshTunnel:
+    return SshTunnel(remote.ssh, remote.port)
+
+
+def _names(models: list[dict]) -> set[str]:
+    return {str(m.get("name", "")) for m in models}
 
 
 def _validate_messages(raw: object) -> tuple[list[dict], str | None]:
@@ -370,6 +681,11 @@ def _validate_chat(body: dict | None,
     if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= MAX_SEED):
         return {}, f"seed must be an integer from 0 to {MAX_SEED}"
 
+    host = body.get("host")
+    if host is not None and (not isinstance(host, str) or not (host == hosts_mod.LOCAL
+                                                               or hosts_mod.alias_problem(host) is None)):
+        return {}, "host must be a host name from /status"
+
     agent = None
     if body.get("agent") is not None:
         agent, model, problem = _validate_agent(body.get("agent"), messages, tools, model, agent_runtimes or {})
@@ -387,4 +703,5 @@ def _validate_chat(body: dict | None,
         "format": response_format,
         "think": think,
         "seed": seed,
+        "host": host,
     }, None

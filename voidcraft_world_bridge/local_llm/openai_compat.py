@@ -112,6 +112,9 @@ def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temper
     message = typed(first.get("message"), dict, {})
     usage = typed(payload.get("usage"), dict, {})
     content = typed(message.get("content"), str, "")
+    # llama-server adds its own `timings`; other servers report none, and the
+    # plugin falls back to wall time for speed (`plugin.py`, `_timings`).
+    timings = typed(payload.get("timings"), dict, {})
     return {
         "text": _THINK_BLOCK.sub("", content, count=1),
         "tool_calls": _tool_calls(message.get("tool_calls")),
@@ -120,6 +123,8 @@ def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temper
         "output_tokens": _count(usage.get("completion_tokens")),
         "total_ms": elapsed_ms,
         "load_ms": None,
+        "prompt_ms": _ms(timings.get("prompt_ms")),
+        "output_ms": _ms(timings.get("predicted_ms")),
     }
 
 
@@ -167,6 +172,10 @@ def _tool_calls(raw: object) -> list[dict]:
                 arguments = {}
         calls.append({"name": function["name"], "arguments": typed(arguments, dict, {})})
     return calls
+
+
+def _ms(value: object) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else None
 
 
 def _count(value: object) -> int:
