@@ -109,6 +109,10 @@ class LocalLlmPlugin:
         self._agent_runtimes: dict[str, AgentRuntime] = {runtime.name: runtime for runtime in agent_runtimes}
         self._agent_jobs = jobs_mod.JobStore(self._run_agent, start_worker=start_worker)
 
+    def close(self) -> None:
+        self._jobs.close()
+        self._agent_jobs.close()
+
     def routes(self) -> list[str]:
         base = f"/plugin/{self.name}"
         return [f"{base}/status", f"{base}/job", f"{base}/chat"]

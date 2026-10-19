@@ -54,6 +54,12 @@ route cannot forget them (`tests/test_server.py` asserts that). Mount the built-
   `TERMINAL_BRIDGE_ALLOWED_HOSTS` is unioned in), `VOIDCRAFT_LOCAL_LLM_URL`,
   `VOIDCRAFT_OLLAMA_URL`, `VOIDCRAFT_LOCAL_LLM_MODEL`.
 
+## Plugin SDK
+
+Public optional modules: `policy`, `routing`, `services`, `jobs`, `testing`. Existing tuple handlers
+remain supported. SDK behavior and lifecycle limits: README § Optional plugin SDK. New helpers need
+a real consumer and focused behavioral tests. Keep private consumer details outside this repository.
+
 ## Releasing
 
 A PyPI version is forever: it can be yanked, never re-uploaded. So a release is two steps, and
