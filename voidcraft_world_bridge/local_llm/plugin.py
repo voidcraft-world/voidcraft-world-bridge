@@ -337,9 +337,10 @@ class LocalLlmPlugin:
         return 200, {"ok": True, "hosts": [self._host_row(lane) for lane in self._lane_list()]}
 
     def _route(self, request: dict) -> tuple[Lane | None, tuple]:
-        """Which machine answers. A named host wins; otherwise the least-busy host
-        that has the named model, this machine winning a tie; a question naming no
-        model goes to this machine, whose pick `/status` shows. Nothing suitable →
+        """Which machine answers. A named host wins, even one whose weights differ (an
+        explicit choice); otherwise the least-busy host that has the named model WITH THE
+        SAME WEIGHTS (`_reference_digests`), this machine winning a tie; a question naming
+        no model goes to this machine, whose pick `/status` shows. Nothing suitable →
         this machine, where the job fails the way it always did (`model_not_installed`)."""
         lanes = self._lane_list()
         local = lanes[0]
@@ -357,8 +358,9 @@ class LocalLlmPlugin:
             return lane, ()
         if len(lanes) == 1 or not model:
             return local, ()
-        candidates = [lane for lane in lanes
-                      if (found := self._installed_for(lane)).models is not None and model in _names(found.models)]
+        found_by_lane = [(lane, self._installed_for(lane)) for lane in lanes]
+        refs = _reference_digests([found for _, found in found_by_lane])
+        candidates = [lane for lane, found in found_by_lane if _serves(found, model, refs)]
         if not candidates:
             return local, ()
         return min(candidates, key=lambda lane: (lane.store.load(), not lane.is_local)), ()
@@ -438,8 +440,11 @@ class LocalLlmPlugin:
             self._models_cache = (now, found)
         return found
 
-    def _host_row(self, lane: Lane, found: Installed | None = None) -> dict:
+    def _host_row(self, lane: Lane, found: Installed | None = None, refs: dict[str, str] | None = None) -> dict:
         found = found or self._installed_for(lane)
+        if refs is None:
+            refs = _reference_digests([self._installed_for(other) for other in self._lane_list()])
+        chat = [m for m in found.models or [] if models_mod.is_chat_model(m)]
         counts = lane.store.counts()
         tok_s, prefill_tok_s = lane.speed.rates()
         if lane.tunnel is None:
@@ -451,7 +456,9 @@ class LocalLlmPlugin:
             "local": lane.is_local,
             "kind": found.runtime.kind,
             "reachable": found.models is not None,
-            "models": [str(m["name"]) for m in found.models or [] if models_mod.is_chat_model(m)],
+            "models": [str(m["name"]) for m in chat],
+            # Installed under a name whose weights differ from the reference: pinnable, never AUTO.
+            "mismatched": [str(m["name"]) for m in chat if not _same_weights(m, refs)],
             "queue": counts["queued"] + counts["running"],
             "running": counts["running"] > 0,
             "tok_s": tok_s,
@@ -466,6 +473,7 @@ class LocalLlmPlugin:
         runtime, models, runtime_version, error = found_by_lane[0][1]
         pinned = os.environ.get(PIN_ENV) or None
         picked = models_mod.pick_model(models or [], pinned)
+        refs = _reference_digests([found for _, found in found_by_lane])
         union: list[dict] = []
         model_hosts: dict[str, list[str]] = {}
         for lane, found in found_by_lane:
@@ -475,7 +483,9 @@ class LocalLlmPlugin:
                 name = str(model["name"])
                 if name not in model_hosts:
                     union.append(model)
-                model_hosts.setdefault(name, []).append(lane.name)
+                    model_hosts[name] = []
+                if _same_weights(model, refs):
+                    model_hosts[name].append(lane.name)
         totals = {"queued": 0, "running": 0}
         for lane in lanes:
             for key, value in lane.store.counts().items():
@@ -494,7 +504,7 @@ class LocalLlmPlugin:
             "pinned_model": pinned,
             "preference": list(models_mod.PREFERENCE),
             **totals,
-            "hosts": [self._host_row(lane, found) for lane, found in found_by_lane],
+            "hosts": [self._host_row(lane, found, refs) for lane, found in found_by_lane],
             "model_hosts": model_hosts,
         }
 
@@ -556,6 +566,30 @@ def _ssh_tunnel(remote: hosts_mod.RemoteHost) -> SshTunnel:
 
 def _names(models: list[dict]) -> set[str]:
     return {str(m.get("name", "")) for m in models}
+
+
+def _reference_digests(founds: list[Installed]) -> dict[str, str]:
+    """The weights each model NAME means: its digest on the first machine that lists one,
+    this machine first. A tag moves upstream (`ollama pull` months apart gives two machines
+    different weights under one name), so a name alone never makes two hosts interchangeable."""
+    refs: dict[str, str] = {}
+    for found in founds:
+        for model in found.models or []:
+            name, digest = str(model.get("name", "")), model.get("digest")
+            if name and digest and name not in refs:
+                refs[name] = str(digest)
+    return refs
+
+
+def _same_weights(model: dict, refs: dict[str, str]) -> bool:
+    """True unless both sides know a digest and they differ (an OpenAI-compatible server lists none)."""
+    ref, digest = refs.get(str(model.get("name", ""))), model.get("digest")
+    return ref is None or digest is None or digest == ref
+
+
+def _serves(found: Installed, model: str, refs: dict[str, str]) -> bool:
+    """This machine can stand in for `model`: installed, with the reference weights."""
+    return any(str(m.get("name", "")) == model and _same_weights(m, refs) for m in found.models or [])
 
 
 def _validate_messages(raw: object) -> tuple[list[dict], str | None]:

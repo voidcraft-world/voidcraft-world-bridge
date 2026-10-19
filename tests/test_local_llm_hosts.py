@@ -157,7 +157,7 @@ def test_status_lists_every_host_and_where_each_model_is(tmp_path, ssh_config):
     local, studio = body["hosts"]
     assert local["local"] is True and local["tunnel"] == "none"
     assert studio == {"name": "studio", "local": False, "kind": "ollama", "reachable": True,
-                      "models": ["gpt-oss:20b", "qwen3.8:latest"], "queue": 0, "running": False,
+                      "models": ["gpt-oss:20b", "qwen3.8:latest"], "mismatched": [], "queue": 0, "running": False,
                       "tok_s": None, "prefill_tok_s": None, "tunnel": "up", "error": None}
     assert [m["name"] for m in body["models"]] == ["qwen3.8:latest", "gpt-oss:20b"]
     assert body["model_hosts"] == {"qwen3.8:latest": ["local", "studio"], "gpt-oss:20b": ["studio"]}
@@ -213,6 +213,46 @@ def test_a_shared_model_goes_to_the_least_busy_host_and_ties_stay_here(tmp_path,
     assert plugin.handle_post("/chat", {}, ask)[1]["host"] == "local"
     assert plugin.handle_post("/chat", {}, ask)[1]["host"] == "studio"
     assert plugin.handle_post("/chat", {}, ask)[1]["host"] == "local"
+
+
+def weights(name: str, digest: str | None) -> dict:
+    return {**model(name), "digest": digest}
+
+
+def test_one_name_with_different_weights_is_not_the_same_model(tmp_path, ssh_config):
+    """A tag moves upstream: pulled weeks apart, two machines hold different weights under one name."""
+    plugin, _ = make(tmp_path, ssh_config,
+                     {"studio": (FakeOllama(models=[weights("qwen3.5:9b", "b" * 64)]), FakeTunnel(5001))},
+                     local=FakeOllama(models=[weights("qwen3.5:9b", "a" * 64)]))
+    _, body = plugin.handle_get("/status", {})
+    assert body["model_hosts"] == {"qwen3.5:9b": ["local"]}, "AUTO never offers the other weights"
+    assert body["hosts"][1]["models"] == ["qwen3.5:9b"] and body["hosts"][1]["mismatched"] == ["qwen3.5:9b"]
+    assert body["hosts"][0]["mismatched"] == [], "this machine's copy is the reference"
+    ask = {**CHAT, "model": "qwen3.5:9b"}
+    assert [plugin.handle_post("/chat", {}, ask)[1]["host"] for _ in range(3)] == ["local"] * 3, \
+        "a busy reference machine still beats different weights"
+    assert plugin.handle_post("/chat", {}, {**ask, "host": "studio"})[1]["host"] == "studio", \
+        "naming the host is an explicit choice, and allowed"
+
+
+def test_matching_weights_share_and_a_server_without_digests_is_trusted_by_name(tmp_path, ssh_config):
+    same = weights("qwen3.5:9b", "a" * 64)
+    plugin, _ = make(tmp_path, ssh_config,
+                     {"studio": (FakeOllama(models=[same]), FakeTunnel(5001)),
+                      "spare": (FakeOllama(models=[weights("qwen3.5:9b", None)]), FakeTunnel(5002))},
+                     local=FakeOllama(models=[same]))
+    _, body = plugin.handle_get("/status", {})
+    assert body["model_hosts"] == {"qwen3.5:9b": ["local", "studio", "spare"]}
+    assert all(host["mismatched"] == [] for host in body["hosts"])
+
+
+def test_the_reference_is_the_first_machine_that_has_the_model(tmp_path, ssh_config):
+    plugin, _ = make(tmp_path, ssh_config,
+                     {"studio": (FakeOllama(models=[weights("gpt-oss:20b", "c" * 64)]), FakeTunnel(5001)),
+                      "spare": (FakeOllama(models=[weights("gpt-oss:20b", "d" * 64)]), FakeTunnel(5002))})
+    _, body = plugin.handle_get("/status", {})
+    assert body["model_hosts"]["gpt-oss:20b"] == ["studio"]
+    assert plugin.handle_post("/chat", {}, {**CHAT, "model": "gpt-oss:20b"})[1]["host"] == "studio"
 
 
 def test_a_question_naming_no_model_stays_here(tmp_path, ssh_config):

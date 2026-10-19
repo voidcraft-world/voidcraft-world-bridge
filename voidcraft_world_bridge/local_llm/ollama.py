@@ -64,6 +64,7 @@ def list_models(base: str, opener: Opener | None = None) -> list[dict]:
         details = typed(entry.get("details"), dict, {})
         models.append({
             "name": str(entry["name"]),
+            "digest": str(entry["digest"]) if entry.get("digest") else None,
             "size_bytes": int(entry.get("size") or 0),
             "details": {
                 "family": details.get("family"),
