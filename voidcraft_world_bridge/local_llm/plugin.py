@@ -47,6 +47,9 @@ PIN_ENV = "VOIDCRAFT_LOCAL_LLM_MODEL"
 MAX_SYSTEM_CHARS = 16_000
 MAX_USER_CHARS = 48_000
 MAX_TOKENS_CEILING = 4096
+# `think` as a reasoning effort, for a model that reads levels and cannot turn reasoning
+# off (gpt-oss ignores `false` and reasons at medium). Passed to Ollama as given.
+THINK_LEVELS = ("low", "medium", "high")
 DEFAULT_MAX_TOKENS = 800
 
 MAX_MESSAGES = 48
@@ -360,8 +363,8 @@ def _validate_chat(body: dict | None,
         return {}, 'format must be "json" or a JSON schema object'
 
     think = body.get("think")
-    if think is not None and not isinstance(think, bool):
-        return {}, "think must be a boolean"
+    if think is not None and not isinstance(think, bool) and think not in THINK_LEVELS:
+        return {}, f"think must be a boolean or one of {', '.join(THINK_LEVELS)}"
 
     seed = body.get("seed")
     if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= MAX_SEED):

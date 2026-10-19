@@ -80,7 +80,7 @@ def version(base: str, opener: Opener | None = None) -> str | None:
 
 
 def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temperature: float,
-         response_format: dict | str | None, think: bool | None,
+         response_format: dict | str | None, think: bool | str | None,
          tools: list[dict] | None = None, num_ctx: int | None = None,
          seed: int | None = None, opener: Opener | None = None) -> dict:
     """One non-streaming chat turn. Returns the text plus the counters Ollama reports.
@@ -92,7 +92,8 @@ def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temper
     rejects the field outright on some Ollama builds ("does not support
     thinking"), so on exactly that error the turn is re-sent once without it —
     the caller asked for "don't think", and a model that cannot think already
-    satisfies that.
+    satisfies that. A level (`"low"`) is passed as given, for a model that reads
+    levels only (gpt-oss ignores `false`).
     """
     body: dict = {
         "model": model,
