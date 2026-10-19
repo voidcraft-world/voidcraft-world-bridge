@@ -6,6 +6,13 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+### Added
+
+- Compute hosts: other machines' model servers answer questions too, each on its own queue, reached
+  through an SSH port forward to an alias in your SSH config (nothing binds to the network).
+  `/status` gains `hosts` and `model_hosts`; `POST /chat` takes `host`; jobs report `host` and
+  `timings`; `POST /hosts` adds or removes one; `VOIDCRAFT_LOCAL_LLM_HOSTS` names the file.
+
 ## [0.1.2] - 2026-10-19
 
 - Add optional caller policies, declarative routes, managed local services, reusable jobs and a socket-free plugin test client.
