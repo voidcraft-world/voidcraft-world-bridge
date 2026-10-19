@@ -6,6 +6,8 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-19
+
 - Add optional caller policies, declarative routes, managed local services, reusable jobs and a socket-free plugin test client.
 - Validate plugin factories, advertise startup diagnostics, and add `check-plugin DIR`.
 - Close plugin resources with the server; reject negative body lengths and malformed JSON responses safely.
@@ -38,6 +40,7 @@ clients depend on are additive-only, so a breaking change is a major version.
   point it at), picks the strongest installed chat model, and answers `POST /chat` as a job.
 - `voidcraft-world-bridge status`, `--port`, `--version`.
 
-[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/voidcraft-world/voidcraft-world-bridge/releases/tag/v0.1.0
