@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from voidcraft_world_bridge.cli import main
-from voidcraft_world_bridge.jobs import BackgroundJob, JobStore, QueueFull
+from voidcraft_world_bridge.jobs import BackgroundJob, JobStore, QueueFull, Report
 from voidcraft_world_bridge.plugins import PluginContext, close_plugins, load_plugins, plugin_module_name, plugin_routes
 from voidcraft_world_bridge.policy import CallerPolicy
 from voidcraft_world_bridge.routing import Route, RoutedPlugin
@@ -116,6 +116,21 @@ def test_queue_limits_are_configurable_and_close_rejects_new_work():
     jobs.close()
     with pytest.raises(QueueFull):
         jobs.submit({})
+
+
+def test_a_job_can_report_progress_while_it_runs():
+    seen = []
+
+    def runner(request: dict, report: Report) -> dict:
+        report({"done": 1, "of": 3})
+        seen.append(jobs.get(job_id)["progress"])
+        return {"rows": 3}
+
+    jobs = JobStore(runner, reports_progress=True, start_worker=False)
+    job_id = jobs.submit({})["id"]
+    jobs.run_next()
+    assert seen == [{"done": 1, "of": 3}]
+    assert jobs.get(job_id)["progress"] is None and jobs.get(job_id)["result"] == {"rows": 3}
 
 
 def test_cleanup_continues_after_one_plugin_fails():

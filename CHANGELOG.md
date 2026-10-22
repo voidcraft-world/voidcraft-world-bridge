@@ -12,6 +12,13 @@ clients depend on are additive-only, so a breaking change is a major version.
   through an SSH port forward to an alias in your SSH config (nothing binds to the network).
   `/status` gains `hosts` and `model_hosts`; `POST /chat` takes `host`; jobs report `host` and
   `timings`; `POST /hosts` adds or removes one; `VOIDCRAFT_LOCAL_LLM_HOSTS` names the file.
+- `GET /job` shows a running answer as it is written: `progress` (`phase` reading → writing, the
+  `text` so far, `output_tokens`, `thinking`, `read_ms`). Ollama answers are now streamed for this;
+  the finished `result` is unchanged. `progress` is `null` when queued, finished, or answered by an
+  OpenAI-compatible server or an agent. A streamed answer keeps the 300 s budget as a whole.
+  Streamed tool calls need Ollama 0.8 or newer.
+- SDK: `JobStore(runner, reports_progress=True)` passes the runner a `report` callable, published as
+  the running job's `progress`. One-argument runners are unchanged.
 
 ## [0.1.2] - 2026-10-19
 

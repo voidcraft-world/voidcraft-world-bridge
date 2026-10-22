@@ -71,11 +71,26 @@ Mounted at `/plugin/local-llm/`:
 |---|---|
 | `GET /status` | Which server answered (`runtime`, `runtime_label`, `runtime_url`), whether it is `reachable`, the installed **chat** models, and `picked_model`. Never an error when no server runs; `reachable: false` is a normal state. `hosts` lists every machine (below) and `model_hosts` which ones have each model. |
 | `POST /chat` | `{system, user}` or `{messages, tools?}`, plus `model?, host?, max_tokens?, temperature?, format?, think?, num_ctx?, seed?` → **202** `{job_id, host}` at once. `400` on a bad body, `429` when 4 requests already wait for that machine; with `host`, `400 host_unknown`, `409 host_unreachable` or `409 model_not_on_host`. |
-| `GET /job?id=` | `queued` → `running` → `done` (`result.text`, `result.tool_calls`, token counts, `total_ms`) or `failed` (`error.code`: `runtime_down` · `runtime_error` · `no_model` · `model_not_installed` · `host_unreachable` · `model_not_on_host`). Every job names the `host` that answered and its `timings`. |
+| `GET /job?id=` | `queued` → `running` → `done` (`result.text`, `result.tool_calls`, token counts, `total_ms`) or `failed` (`error.code`: `runtime_down` · `runtime_error` · `no_model` · `model_not_installed` · `host_unreachable` · `model_not_on_host`). Every job names the `host` that answered and its `timings`. A `running` job answered by Ollama also carries `progress` (below); otherwise `progress` is `null`. |
 | `POST /hosts` | `{action: "add", ssh, name?, kind?, port?}` or `{action: "remove", name}` → `{ok, hosts}`. Answers on this machine's loopback only. |
 
 Generation is a job, not a request: one answer can take a minute, and one model generates one
 answer at a time — two at once would only split the same memory bandwidth.
+
+While Ollama writes the answer, the job shows it:
+
+```json
+"progress": { "phase": "writing", "text": "The map shows two rivers", "output_tokens": 6, "thinking": false, "read_ms": 2140 }
+```
+
+- `phase` is `"reading"` until the first token arrives (the model loading, then reading the
+  prompt), and `"writing"` after it. `read_ms` is how long reading took; `null` until then.
+- `text` is the whole answer so far, not a delta. `output_tokens` counts streamed chunks, an
+  approximation; the finished `result.output_tokens` is the server's own count.
+- `thinking` is `true` while a reasoning model is thinking and has not started the answer.
+- It updates at most every 150 ms. It is `null` while queued, until the question is sent to the
+  model server, once the job is `done` or `failed` (read `result` then), and for a server that
+  does not stream (OpenAI-compatible ones) or an agent.
 
 ## Compute hosts
 
@@ -176,7 +191,7 @@ Existing plugins continue to work. New plugins can import these stdlib-only publ
 | `policy` | `CallerPolicy`: optional stricter origins, local hosts and proxy/no-cors restrictions; assign it to `plugin.request_policy` |
 | `routing` | `Route(method, path, handler)` and `RoutedPlugin(name, routes)` generate dispatch and discovery from one table |
 | `services` | `ManagedService`: start a loopback child, probe readiness, back off after failure, stop after idle time, and close owned resources |
-| `jobs` | `BackgroundJob` rejects overlapping work; `JobStore` queues work with configurable pending/retained limits |
+| `jobs` | `BackgroundJob` rejects overlapping work; `JobStore` queues work with configurable pending/retained limits, and with `reports_progress=True` passes the runner a `report` callable whose last value is the running job's `progress` |
 | `testing` | `PluginClient` validates and exercises a plugin without sockets |
 
 Route handlers take `(query, body)` and return the existing response tuples. `operations` in

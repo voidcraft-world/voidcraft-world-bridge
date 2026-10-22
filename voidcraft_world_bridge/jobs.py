@@ -6,9 +6,9 @@ from collections.abc import Callable
 from copy import deepcopy
 
 # Compatibility: the LLM's wire shape stays owned by its original implementation.
-from voidcraft_world_bridge.local_llm.jobs import JobFailure, JobStore, QueueFull
+from voidcraft_world_bridge.local_llm.jobs import JobFailure, JobStore, QueueFull, Report
 
-__all__ = ["BackgroundJob", "JobFailure", "JobStore", "QueueFull"]
+__all__ = ["BackgroundJob", "JobFailure", "JobStore", "QueueFull", "Report"]
 
 
 class BackgroundJob:

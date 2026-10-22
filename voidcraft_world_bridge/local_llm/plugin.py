@@ -195,7 +195,7 @@ class LocalLlmPlugin:
         self._models_lock = threading.Lock()
         # (stamp, what the probe found) — see _installed.
         self._models_cache: tuple[float, Installed | None] = (0.0, None)
-        self._jobs = jobs_mod.JobStore(functools.partial(self._run_chat_on, hosts_mod.LOCAL),
+        self._jobs = jobs_mod.JobStore(functools.partial(self._run_chat_on, hosts_mod.LOCAL), reports_progress=True,
                                        start_worker=start_worker, host=hosts_mod.LOCAL)
         self._lanes_lock = threading.Lock()
         self._lanes: dict[str, Lane] = {hosts_mod.LOCAL: Lane(hosts_mod.LOCAL, self._jobs)}
@@ -279,7 +279,7 @@ class LocalLlmPlugin:
             return list(self._lanes.values())
 
     def _add_lane(self, remote: hosts_mod.RemoteHost) -> Lane:
-        store = jobs_mod.JobStore(functools.partial(self._run_chat_on, remote.name),
+        store = jobs_mod.JobStore(functools.partial(self._run_chat_on, remote.name), reports_progress=True,
                                   start_worker=self._start_worker, host=remote.name)
         lane = Lane(remote.name, store, remote, self._tunnel_factory(remote))
         with self._lanes_lock:
@@ -522,7 +522,7 @@ class LocalLlmPlugin:
         except AgentRefused as refused:
             raise jobs_mod.JobFailure(refused.code, refused.message) from refused
 
-    def _run_chat_on(self, lane_name: str, request: dict) -> dict:
+    def _run_chat_on(self, lane_name: str, request: dict, report: jobs_mod.Report) -> dict:
         with self._lanes_lock:
             lane = self._lanes.get(lane_name)
         if lane is None:
@@ -549,7 +549,7 @@ class LocalLlmPlugin:
                                   max_tokens=request["max_tokens"], temperature=request["temperature"],
                                   response_format=request.get("format"), think=request.get("think"),
                                   tools=request.get("tools"), num_ctx=request.get("num_ctx"),
-                                  seed=request.get("seed"), opener=self._opener)
+                                  seed=request.get("seed"), opener=self._opener, on_progress=report)
         except RuntimeDown as err:
             code = "runtime_down" if lane.is_local else "host_unreachable"
             raise jobs_mod.JobFailure(code, f"{runtime.label} stopped answering: {err}") from err

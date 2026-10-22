@@ -241,3 +241,58 @@ def test_a_tool_entry_that_is_not_an_object_is_a_400_not_a_500():
     request, problem = _validate_chat(body)
     assert request == {}
     assert problem is not None and "each tool must be" in problem
+
+
+# --- progress while the answer is written ----------------------------------------
+
+
+def _watch(p: LocalLlmPlugin, fake: FakeOllama, body: dict) -> tuple[list[dict], dict]:
+    """Run one question, polling `/job` as each streamed line arrives, as a page would."""
+    _, posted = p.handle_post("/chat", {}, body)
+    polls: list[dict] = []
+    fake.on_line = lambda line: polls.append(p.handle_get("/job", {"id": [posted["job_id"]]})[1])
+    assert posted["progress"] is None, "queued: no progress yet"
+    p._jobs.run_next()
+    return polls, p.handle_get("/job", {"id": [posted["job_id"]]})[1]
+
+
+def test_a_running_job_shows_reading_then_the_answer_being_written():
+    fake = FakeOllama(chat_reply="Four apples.")
+    polls, done = _watch(plugin(fake), fake, dict(CHAT))
+    assert all(poll["state"] == jobs_mod.RUNNING for poll in polls)
+    first, second = polls[0]["progress"], polls[1]["progress"]
+    assert first == {"phase": "reading", "text": "", "output_tokens": 0, "thinking": False, "read_ms": None}
+    assert second["phase"] == "writing" and second["text"] == "Four" and isinstance(second["read_ms"], int)
+    assert all("Four apples.".startswith(poll["progress"]["text"]) for poll in polls)
+    assert done["state"] == jobs_mod.DONE and done["progress"] is None
+    assert done["result"]["text"] == "Four apples."
+    assert set(done["result"]) == {"text", "tool_calls", "model", "prompt_tokens", "output_tokens",
+                                   "total_ms", "load_ms", "prompt_ms", "output_ms"}
+
+
+def test_a_thinking_model_shows_thinking_before_the_answer():
+    fake = FakeOllama(thinking="Count them.", chat_reply="Three.")
+    polls, done = _watch(plugin(fake), fake, {**CHAT, "think": True})
+    assert polls[1]["progress"]["thinking"] is True and polls[1]["progress"]["text"] == ""
+    assert done["result"]["text"] == "Three."
+
+
+def test_a_think_refusal_inside_the_stream_is_retried_and_the_job_answers():
+    fake = FakeOllama(reject_think_in_stream=True)
+    _, done = _watch(plugin(fake), fake, dict(CHAT))
+    assert done["state"] == jobs_mod.DONE
+    chats = [b for path, b in fake.requests if path == "/api/chat"]
+    assert len(chats) == 2 and "think" not in chats[1]
+
+
+def test_an_error_mid_answer_fails_the_job_and_drops_the_partial_text():
+    fake = FakeOllama(stream_error="model runner has unexpectedly stopped", stream_error_after=2)
+    _, done = _watch(plugin(fake), fake, dict(CHAT))
+    assert done["state"] == jobs_mod.FAILED and done["progress"] is None
+    assert done["error"] == {"code": "runtime_error", "message": "model runner has unexpectedly stopped"}
+
+
+def test_a_reply_cut_off_mid_answer_is_runtime_down():
+    fake = FakeOllama(cut_off=True)
+    _, done = _watch(plugin(fake), fake, dict(CHAT))
+    assert done["error"]["code"] == "runtime_down"

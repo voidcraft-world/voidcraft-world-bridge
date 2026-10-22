@@ -7,6 +7,16 @@ model is 5–60 s, and the FIRST one after a cold start also pages the model in
 from disk. So `POST /chat` enqueues and returns 202 at once, and the page polls
 `GET /job`.
 
+── WHILE IT RUNS ─────────────────────────────────────────────────────────────
+Polling alone can say only "running", for up to a minute. A store built with
+`reports_progress=True` passes its runner a second argument, `report`, and a
+running job's `progress` is whatever the runner reported last — for the chat
+runner, the answer so far (`progress.py` owns that shape and its throttle).
+The worker writes it and request threads read it, so each report is copied in
+under the store's lock. `progress` is null while queued, for a runner that
+never reports, and once the job is done or failed: `result` or `error` is the
+answer then. A one-argument runner works as before.
+
 ── WHY ONE WORKER ────────────────────────────────────────────────────────────
 Two concurrent generations on one Mac do not finish sooner; they split the
 same memory bandwidth, and two DIFFERENT models loaded at once can exceed the
@@ -25,11 +35,14 @@ deletes a job otherwise and the bridge runs for weeks.
 """
 from __future__ import annotations
 
+import copy
+import functools
 import queue
 import secrets
 import threading
 import time
 from collections.abc import Callable
+from typing import cast
 
 MAX_PENDING = 4
 MAX_KEPT = 32
@@ -38,6 +51,13 @@ QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 
 Runner = Callable[[dict], dict]
 """Takes the job's `request`, returns the result dict or raises JobFailure."""
+
+Report = Callable[[dict], None]
+"""A running job's progress sink. Each call replaces the job's `progress` with
+a copy of the JSON-able dict it is given, until the job finishes."""
+
+ProgressRunner = Callable[[dict, Report], dict]
+"""A Runner that also takes the job's `report` (`reports_progress=True`)."""
 
 
 class JobFailure(Exception):
@@ -52,14 +72,17 @@ class QueueFull(Exception):
 
 
 class JobStore:
-    def __init__(self, runner: Runner, *, clock: Callable[[], float] = time.time,
+    def __init__(self, runner: Runner | ProgressRunner, *, reports_progress: bool = False,
+                 clock: Callable[[], float] = time.time,
                  start_worker: bool = True, max_pending: int = MAX_PENDING,
                  max_kept: int = MAX_KEPT, host: str = "local") -> None:
         if max_pending < 1 or max_kept < 1:
             raise ValueError("job limits must be positive")
         self._max_pending, self._max_kept = max_pending, max_kept
         self._closed = False
-        self._runner = runner
+        # One calling shape inside: a plain runner is wrapped to ignore its sink.
+        self._runner: ProgressRunner = (cast(ProgressRunner, runner) if reports_progress
+                                        else _ignoring_report(cast(Runner, runner)))
         self.host = host
         self._clock = clock
         self._lock = threading.Lock()
@@ -79,7 +102,7 @@ class JobStore:
             job = {"id": job_id, "state": QUEUED, "created_at": self._clock(),
                    "started_at": None, "finished_at": None,
                    "model": request.get("model"), "result": None, "error": None,
-                   "request": request}
+                   "progress": None, "request": request}
             self._jobs[job_id] = job
             self._order.append(job_id)
             self._forget_oldest_finished()
@@ -137,7 +160,7 @@ class JobStore:
             job["started_at"] = self._clock()
             request = dict(job["request"])
         try:
-            result = self._runner(request)
+            result = self._runner(request, functools.partial(self._report, job))
             # Timings describe the job, not the answer: lifted out so `result` stays the adapter's shape.
             timings = result.pop("timings", None)
             outcome = {"state": DONE, "result": result, "timings": timings,
@@ -149,7 +172,16 @@ class JobStore:
         with self._lock:
             job.update(outcome)
             job["finished_at"] = self._clock()
+            job["progress"] = None  # the answer is `result` now; the partial text goes with the prompt
             job["request"] = {}  # the prompt is the user's content; do not keep it past the answer
+
+    def _report(self, job: dict, progress: dict) -> None:
+        """The runner's `report`. Copied in, so a runner that keeps mutating its
+        dict cannot change what a reader is serializing; ignored once finished."""
+        snapshot = copy.deepcopy(progress)
+        with self._lock:
+            if job["state"] == RUNNING:
+                job["progress"] = snapshot
 
     def _forget_oldest_finished(self) -> None:
         while len(self._order) > self._max_kept:
@@ -176,4 +208,10 @@ class JobStore:
             "error": job["error"],
             "host": self.host,
             "timings": job.get("timings"),
+            # Replaced on each report, never mutated, so it is safe to serialize outside the lock.
+            "progress": job["progress"] if job["state"] == RUNNING else None,
         }
+
+
+def _ignoring_report(runner: Runner) -> ProgressRunner:
+    return lambda request, _report: runner(request)
