@@ -12,6 +12,11 @@ Two concurrent generations on one Mac do not finish sooner; they split the
 same memory bandwidth, and two DIFFERENT models loaded at once can exceed the
 GPU budget and push both onto the CPU. Serial is the fast order here.
 
+── ONE STORE PER MACHINE ─────────────────────────────────────────────────────
+"One worker" is per model server. Another machine (`hosts.py`) has its own
+memory bandwidth, so the plugin gives each host its own store, and the job
+records which `host` decoded it.
+
 ── WHY BOUNDED, TWICE ────────────────────────────────────────────────────────
 `MAX_PENDING` refuses new work while four jobs wait, because the fifth
 question would not start for minutes and the page that asked it has usually
@@ -49,19 +54,20 @@ class QueueFull(Exception):
 class JobStore:
     def __init__(self, runner: Runner, *, clock: Callable[[], float] = time.time,
                  start_worker: bool = True, max_pending: int = MAX_PENDING,
-                 max_kept: int = MAX_KEPT) -> None:
+                 max_kept: int = MAX_KEPT, host: str = "local") -> None:
         if max_pending < 1 or max_kept < 1:
             raise ValueError("job limits must be positive")
         self._max_pending, self._max_kept = max_pending, max_kept
         self._closed = False
         self._runner = runner
+        self.host = host
         self._clock = clock
         self._lock = threading.Lock()
         self._jobs: dict[str, dict] = {}
         self._order: list[str] = []
         self._pending: queue.Queue[str | None] = queue.Queue()
         if start_worker:
-            threading.Thread(target=self._work_forever, name="local-llm-worker", daemon=True).start()
+            threading.Thread(target=self._work_forever, name=f"local-llm-worker-{host}", daemon=True).start()
 
     # -- public ---------------------------------------------------------------
     def submit(self, request: dict) -> dict:
@@ -90,6 +96,11 @@ class JobStore:
         with self._lock:
             states = [j["state"] for j in self._jobs.values()]
         return {"queued": states.count(QUEUED), "running": states.count(RUNNING)}
+
+    def load(self) -> int:
+        """Queued + running: how far back a new question would start."""
+        counts = self.counts()
+        return counts["queued"] + counts["running"]
 
     def run_next(self) -> bool:
         """Run one queued job on THIS thread. The worker loop calls it; tests call it directly."""
@@ -127,7 +138,10 @@ class JobStore:
             request = dict(job["request"])
         try:
             result = self._runner(request)
-            outcome = {"state": DONE, "result": result, "model": result.get("model") or request.get("model")}
+            # Timings describe the job, not the answer: lifted out so `result` stays the adapter's shape.
+            timings = result.pop("timings", None)
+            outcome = {"state": DONE, "result": result, "timings": timings,
+                       "model": result.get("model") or request.get("model")}
         except JobFailure as failure:
             outcome = {"state": FAILED, "error": {"code": failure.code, "message": failure.message}}
         except Exception as err:  # noqa: BLE001 — a runner bug must fail ONE job, never kill the worker
@@ -160,4 +174,6 @@ class JobStore:
             "elapsed_ms": elapsed,
             "result": job["result"],
             "error": job["error"],
+            "host": self.host,
+            "timings": job.get("timings"),
         }

@@ -64,6 +64,7 @@ def list_models(base: str, opener: Opener | None = None) -> list[dict]:
         details = typed(entry.get("details"), dict, {})
         models.append({
             "name": str(entry["name"]),
+            "digest": str(entry["digest"]) if entry.get("digest") else None,
             "size_bytes": int(entry.get("size") or 0),
             "details": {
                 "family": details.get("family"),
@@ -129,6 +130,8 @@ def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temper
         "output_tokens": int(payload.get("eval_count") or 0),
         "total_ms": _ns_to_ms(payload.get("total_duration")),
         "load_ms": _ns_to_ms(payload.get("load_duration")),
+        "prompt_ms": _ns_to_ms(payload.get("prompt_eval_duration")),
+        "output_ms": _ns_to_ms(payload.get("eval_duration")),
     }
 
 

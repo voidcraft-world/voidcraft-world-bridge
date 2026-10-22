@@ -58,7 +58,8 @@ Access stop it, on purpose. The bridge is the one door through, and it is narrow
   may call it. Any other site gets a `403`.
 - **DNS-rebinding guard.** A request addressed to any hostname other than `localhost` /
   `127.0.0.1` / `[::1]` gets a `403`, even when the origin looks right.
-- **No shell, no files.** It routes chat requests to your model server and nothing else.
+- **No shell, no files.** It routes chat requests to your model server (and, if you add them,
+  your other machines' model servers over SSH) and nothing else.
 - **Your prompts are not kept.** A request is dropped from memory once it is answered.
 - **Stdlib only.** Zero third-party dependencies.
 
@@ -68,12 +69,40 @@ Mounted at `/plugin/local-llm/`:
 
 | Route | Behaviour |
 |---|---|
-| `GET /status` | Which server answered (`runtime`, `runtime_label`, `runtime_url`), whether it is `reachable`, the installed **chat** models, and `picked_model`. Never an error when no server runs; `reachable: false` is a normal state. |
-| `POST /chat` | `{system, user}` or `{messages, tools?}`, plus `model?, max_tokens?, temperature?, format?, think?, num_ctx?, seed?` → **202** `{job_id}` at once. `400` on a bad body, `429` when 4 requests already wait. |
-| `GET /job?id=` | `queued` → `running` → `done` (`result.text`, `result.tool_calls`, token counts, `total_ms`) or `failed` (`error.code`: `runtime_down` · `runtime_error` · `no_model` · `model_not_installed`). |
+| `GET /status` | Which server answered (`runtime`, `runtime_label`, `runtime_url`), whether it is `reachable`, the installed **chat** models, and `picked_model`. Never an error when no server runs; `reachable: false` is a normal state. `hosts` lists every machine (below) and `model_hosts` which ones have each model. |
+| `POST /chat` | `{system, user}` or `{messages, tools?}`, plus `model?, host?, max_tokens?, temperature?, format?, think?, num_ctx?, seed?` → **202** `{job_id, host}` at once. `400` on a bad body, `429` when 4 requests already wait for that machine; with `host`, `400 host_unknown`, `409 host_unreachable` or `409 model_not_on_host`. |
+| `GET /job?id=` | `queued` → `running` → `done` (`result.text`, `result.tool_calls`, token counts, `total_ms`) or `failed` (`error.code`: `runtime_down` · `runtime_error` · `no_model` · `model_not_installed` · `host_unreachable` · `model_not_on_host`). Every job names the `host` that answered and its `timings`. |
+| `POST /hosts` | `{action: "add", ssh, name?, kind?, port?}` or `{action: "remove", name}` → `{ok, hosts}`. Answers on this machine's loopback only. |
 
 Generation is a job, not a request: one answer can take a minute, and one model generates one
 answer at a time — two at once would only split the same memory bandwidth.
+
+## Compute hosts
+
+Another machine on your desk can answer questions too: each one is its own queue, so two
+questions decode at once instead of in turn. The bridge reaches it over **SSH**, so its model
+server stays bound to its own loopback and nothing listens on your network.
+
+1. On the other machine, run a model server bound to `127.0.0.1` (Ollama does by default).
+2. On this machine, give it a `Host` entry in `~/.ssh/config` and connect once by hand, so its
+   key and host key are set up: `ssh studio`.
+3. Add it: `POST /plugin/local-llm/hosts` with `{"action": "add", "ssh": "studio"}`, or list it
+   in `~/.config/voidcraft-world-bridge/hosts.json` (or the file `VOIDCRAFT_LOCAL_LLM_HOSTS`
+   names):
+
+```json
+{ "version": 1, "hosts": [{ "name": "studio", "ssh": "studio", "kind": "ollama", "port": 11434 }] }
+```
+
+- **Only an alias.** A host must be a literal `Host` line in your SSH config, and the bridge
+  never stores an address, user or key. `ssh` runs with `BatchMode=yes`, so a host that would
+  prompt for anything fails instead of hanging.
+- **Routing.** A question naming `host` goes there. One naming only a `model` goes to the
+  least-busy machine that has it, this one winning a tie. One naming neither stays here.
+- **Awake while used.** The tunnel's SSH session holds the other machine awake (`caffeinate`
+  on macOS, `systemd-inhibit` on Linux) and closes after 30 idle minutes, so it can sleep again.
+- **Speed.** `/status` reports each host's recent `tok_s` and `prefill_tok_s`, so a caller can
+  tell a fast machine from a slow one before it waits on it.
 
 ## Commands
 

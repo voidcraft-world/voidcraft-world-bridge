@@ -31,7 +31,9 @@ server they already run (Ollama, LM Studio, llama.cpp, any OpenAI-compatible one
 | `local_llm/runtimes.py` | Which model server answers: probe Ollama → LM Studio → llama.cpp, or the one configured URL. |
 | `local_llm/ollama.py`, `openai_compat.py` | The two wire formats, same three functions; what does not translate to OpenAI's shape is in the latter's docstring. |
 | `local_llm/models.py` | Which installed model answers; reads both Ollama tags and OpenAI-style ids. |
-| `local_llm/jobs.py` | The bounded single-worker queue, and why generation is a job. |
+| `local_llm/jobs.py` | The bounded single-worker queue, and why generation is a job. One store per host. |
+| `local_llm/hosts.py` | Compute hosts: the `hosts.json` file, and why a host is only an SSH alias from the user's own config. |
+| `local_llm/tunnel.py` | `SshTunnel`: the loopback-to-loopback port forward, keep-awake, backoff and idle stop. |
 | `local_llm/agents.py` | The agent-runtime contract. The package ships NONE; a host registers its own. |
 | `scripts/release.py` | Cutting a release (below). Not shipped in the wheel; stdlib only all the same. |
 
@@ -52,7 +54,7 @@ route cannot forget them (`tests/test_server.py` asserts that). Mount the built-
 - Port `7682` by default (`VOIDCRAFT_BRIDGE_PORT`); voidcraft.world probes it.
 - Env names: `VOIDCRAFT_BRIDGE_PLUGINS`, `VOIDCRAFT_BRIDGE_ALLOWED_HOSTS` (the legacy
   `TERMINAL_BRIDGE_ALLOWED_HOSTS` is unioned in), `VOIDCRAFT_LOCAL_LLM_URL`,
-  `VOIDCRAFT_OLLAMA_URL`, `VOIDCRAFT_LOCAL_LLM_MODEL`.
+  `VOIDCRAFT_OLLAMA_URL`, `VOIDCRAFT_LOCAL_LLM_MODEL`, `VOIDCRAFT_LOCAL_LLM_HOSTS`.
 
 ## Plugin SDK
 

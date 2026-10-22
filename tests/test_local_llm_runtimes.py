@@ -309,3 +309,21 @@ def test_a_refusal_fails_the_job_with_the_runtimes_code():
     p._agent_jobs.run_next()
     assert p.handle_get("/job", {"id": [job["job_id"]]})[1]["error"] == {
         "code": "nope", "message": "refused on purpose"}
+
+
+# --- speed --------------------------------------------------------------------
+
+def test_llama_server_timings_split_prefill_from_output():
+    def llama_server(path, body):
+        if path == "/v1/chat/completions":
+            return {**lm_studio()(path, body), "timings": {"prompt_n": 50, "prompt_ms": 250.0,
+                                                           "predicted_n": 7, "predicted_ms": 700.0}}
+        return lm_studio()(path, body)
+    job = ask(plugin(Machine(p8080=llama_server)), dict(QUESTION))
+    assert job["timings"] == {"prompt_tokens": 50, "prompt_s": 0.25, "output_tokens": 7, "output_s": 0.7}
+
+
+def test_a_server_without_timings_falls_back_to_wall_time():
+    job = ask(plugin(Machine(p1234=lm_studio())), dict(QUESTION))
+    assert job["timings"]["prompt_s"] is None
+    assert job["timings"]["output_tokens"] == 7 and job["timings"]["output_s"] >= 0
