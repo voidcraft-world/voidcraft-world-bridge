@@ -6,6 +6,8 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-22
+
 ### Added
 
 - Compute hosts: other machines' model servers answer questions too, each on its own queue, reached
@@ -52,7 +54,8 @@ clients depend on are additive-only, so a breaking change is a major version.
   point it at), picks the strongest installed chat model, and answers `POST /chat` as a job.
 - `voidcraft-world-bridge status`, `--port`, `--version`.
 
-[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/voidcraft-world/voidcraft-world-bridge/releases/tag/v0.1.0
