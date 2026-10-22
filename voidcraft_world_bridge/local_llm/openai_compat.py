@@ -18,6 +18,8 @@ answers in the same result shape, so `plugin.py` never learns which one answered
   object, a tool reply naming its tool). Here a call carries an `id` and its
   arguments as a JSON string, and a tool reply names that `id`. The ids are
   minted per request and matched to replies by tool name, in order.
+- Progress: the reply is not streamed, so `on_progress` is never called and a
+  running job's `progress` stays null (`progress.py`). The answer arrives whole.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ import os
 import re
 import time
 
+from voidcraft_world_bridge.local_llm.jobs import Report
 from voidcraft_world_bridge.local_llm.transport import Opener, RuntimeRefused, http_json
 from voidcraft_world_bridge.shape import typed
 
@@ -86,7 +89,8 @@ def version(base: str, opener: Opener | None = None) -> str | None:  # noqa: ARG
 def chat(base: str, model: str, messages: list[dict], *, max_tokens: int, temperature: float,
          response_format: dict | str | None, think: bool | str | None,  # noqa: ARG001 — see the module note
          tools: list[dict] | None = None, num_ctx: int | None = None,  # noqa: ARG001 — see the module note
-         seed: int | None = None, opener: Opener | None = None) -> dict:
+         seed: int | None = None, opener: Opener | None = None,
+         on_progress: Report | None = None) -> dict:  # noqa: ARG001 — see the module note
     """One non-streaming chat turn, answered in the same shape as `ollama.chat`."""
     body: dict = {
         "model": model,

@@ -29,7 +29,9 @@ server they already run (Ollama, LM Studio, llama.cpp, any OpenAI-compatible one
 | `builtins.py` | The plugins every bridge mounts with no config (`local-llm`), and the one door for a host's agent runtimes. |
 | `local_llm/plugin.py` | `/status`, `/chat` (202 + job), `/job`; body validation (it arrives from a browser). |
 | `local_llm/runtimes.py` | Which model server answers: probe Ollama → LM Studio → llama.cpp, or the one configured URL. |
-| `local_llm/ollama.py`, `openai_compat.py` | The two wire formats, same three functions; what does not translate to OpenAI's shape is in the latter's docstring. |
+| `local_llm/ollama.py`, `openai_compat.py` | The two wire formats, same three functions; what does not translate to OpenAI's shape is in the latter's docstring. Ollama's chat is streamed. |
+| `local_llm/transport.py` | JSON over loopback HTTP, one-shot (`http_json`) or streamed line by line (`http_ndjson`), and the two failures (`RuntimeDown`, `RuntimeRefused`). Why a stream keeps two time limits. |
+| `local_llm/progress.py` | `ChatProgress`: a running job's `progress` (the answer so far), its shape and its throttle. |
 | `local_llm/models.py` | Which installed model answers; reads both Ollama tags and OpenAI-style ids. |
 | `local_llm/jobs.py` | The bounded single-worker queue, and why generation is a job. One store per host. |
 | `local_llm/hosts.py` | Compute hosts: the `hosts.json` file, and why a host is only an SSH alias from the user's own config. |
@@ -51,6 +53,8 @@ route cannot forget them (`tests/test_server.py` asserts that). Mount the built-
   **Additive-only**: a host may add keys, never change these. `protocol` bumps only when a
   key changes meaning. voidcraft.world reads `plugins` to decide what it can offer.
 - `GET /plugin/local-llm/status` — additive-only as well (`STATUS_VERSION`).
+- `GET /plugin/local-llm/job` — additive-only too: `progress` (`progress.py`) was added beside
+  `result`, and a finished `result` keeps the one-shot shape.
 - Port `7682` by default (`VOIDCRAFT_BRIDGE_PORT`); voidcraft.world probes it.
 - Env names: `VOIDCRAFT_BRIDGE_PLUGINS`, `VOIDCRAFT_BRIDGE_ALLOWED_HOSTS` (the legacy
   `TERMINAL_BRIDGE_ALLOWED_HOSTS` is unioned in), `VOIDCRAFT_LOCAL_LLM_URL`,

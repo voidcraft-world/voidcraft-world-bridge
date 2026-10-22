@@ -19,10 +19,13 @@ from voidcraft_world_bridge.local_llm.plugin import LocalLlmPlugin
 
 class _Response:
     def __init__(self, payload) -> None:
-        self._raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        self._body = io.BytesIO(payload if isinstance(payload, bytes) else json.dumps(payload).encode())
 
     def read(self) -> bytes:
-        return self._raw
+        return self._body.read()
+
+    def readline(self, limit: int = -1) -> bytes:
+        return self._body.readline(limit)
 
     def __enter__(self):
         return self
@@ -80,8 +83,9 @@ def ollama(models=("qwen3.5:9b",)):
         if path == "/api/version":
             return {"version": "0.35.1"}
         if path == "/api/chat":
+            # The whole reply as one streamed line, final and all.
             return {"model": body["model"], "message": {"role": "assistant", "content": "from ollama"},
-                    "prompt_eval_count": 1, "eval_count": 1}
+                    "done": True, "prompt_eval_count": 1, "eval_count": 1}
         return _refused(path, 404, {"error": "not found"})
     return handle
 
@@ -219,6 +223,25 @@ def test_tool_calls_round_trip_with_ids_and_parsed_arguments():
         ("call_2_1", "opened"), ("call_2_0", "3 hits")]
 
 
+def test_an_openai_server_does_not_stream_so_a_running_job_has_no_progress():
+    polls: list[dict] = []
+    job_ids: list[str] = []
+
+    def watched(path, body):
+        if path == "/v1/chat/completions":
+            polls.append(p.handle_get("/job", {"id": job_ids})[1])
+        return lm_studio()(path, body)
+
+    p = plugin(Machine(p1234=watched))
+    status, job = p.handle_post("/chat", {}, dict(QUESTION))
+    assert status == 202
+    job_ids.append(job["job_id"])
+    p._jobs.run_next()
+    assert polls[0]["state"] == "running" and polls[0]["progress"] is None
+    _, sent = next(r for r in p._opener.requests if r[0].endswith("/chat/completions"))
+    assert sent["stream"] is False
+
+
 def test_a_server_with_no_model_list_is_not_an_openai_server():
     from voidcraft_world_bridge.local_llm.transport import RuntimeRefused
     with pytest.raises(RuntimeRefused):
@@ -257,6 +280,7 @@ class EchoAgent:
     def __init__(self, refuse: bool = False) -> None:
         self.refuse = refuse
         self.ran: list[dict] = []
+        self.on_run = None
 
     def model_error(self, model):
         return None if model in ("e1", "e2") else "model must be e1 or e2"
@@ -269,6 +293,8 @@ class EchoAgent:
 
     def run(self, request):
         self.ran.append(request)
+        if self.on_run:
+            self.on_run()
         if self.refuse:
             raise AgentRefused("nope", "refused on purpose")
         return {"text": request["messages"][1]["content"], "tool_calls": [], "model": request["model"]}
@@ -295,6 +321,16 @@ def test_a_registered_runtime_answers_on_its_own_queue():
     assert done["result"]["text"] == "U"
     assert agent.ran[0]["agent"] == {"runtime": "echo", "tag": "t"}
     assert p.handle_get("/status", {"agents": ["1"]})[1]["agents"] == [{"id": "echo:1", "runtime": "echo"}]
+
+
+def test_an_agent_job_has_no_progress_while_it_runs():
+    agent = EchoAgent()
+    p = plugin(Machine(), agent_runtimes=[agent])
+    _, job = p.handle_post("/chat", {}, dict(AGENT_BODY))
+    polls: list[dict] = []
+    agent.on_run = lambda: polls.append(p.handle_get("/job", {"id": [job["job_id"]]})[1])
+    p._agent_jobs.run_next()
+    assert polls[0]["state"] == "running" and polls[0]["progress"] is None
 
 
 def test_the_runtime_validates_its_own_fields_and_models():
