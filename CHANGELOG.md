@@ -6,6 +6,11 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+### Changed
+
+- The copyright and the package author name Uladzislau Tarsunou instead of "VoidCraft", which is not
+  a legal entity. The license stays MIT.
+
 ## [0.1.3] - 2026-10-22
 
 ### Added
