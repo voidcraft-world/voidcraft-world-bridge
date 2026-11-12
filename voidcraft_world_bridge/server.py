@@ -15,13 +15,19 @@ to their local model, and every dependency is one more thing they must trust.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
 from voidcraft_world_bridge import __version__
-from voidcraft_world_bridge.guards import host_allowed, is_no_cors_browser_request, origin_allowed
+from voidcraft_world_bridge.guards import (
+    canonical_origins,
+    host_allowed,
+    is_no_cors_browser_request,
+    origin_allowed,
+)
 from voidcraft_world_bridge.plugins import (
     Plugin,
     close_plugins,
@@ -61,6 +67,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
     # response. Plugin paths and `/snapshot` are matched first.
     GET_ROUTES: ClassVar[Mapping[str, str]] = {}
     POST_ROUTES: ClassVar[Mapping[str, str]] = {}
+    # The browser origins this bridge serves, besides loopback (every bridge
+    # serves loopback; guards.py says why). None is the shipped set,
+    # `ALLOWED_BROWSER_ORIGINS`, and replacing it is the host's call alone: a
+    # host with a page of its own names that page's origins here, and only
+    # those are served. Checked and put in the browser's spelling when the class
+    # is made, so a typo fails at startup instead of refusing the host's page.
+    ALLOWED_ORIGINS: ClassVar[AbstractSet[str] | None] = None
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        # Only the class that sets it: a subclass of a host inherits the
+        # already-checked set.
+        own = cls.__dict__.get("ALLOWED_ORIGINS")
+        if own is not None:
+            cls.ALLOWED_ORIGINS = canonical_origins(own)
 
     def version_string(self) -> str:
         """The Server header: the bridge's name, not the Python it runs on."""
@@ -81,6 +102,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         }
 
     # --- guards -------------------------------------------------------------
+
+    def _allows_origin(self, origin: str | None) -> bool:
+        """The one place this handler judges an Origin: against its host's set.
+        The 403, the CORS echo and the preflight all ask it, so they cannot
+        disagree about who is allowed."""
+        return origin_allowed(origin, self.ALLOWED_ORIGINS)
 
     def _host_guard(self) -> bool:
         """403 a request addressed to a Host we do not answer to.
@@ -103,7 +130,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         gets pasted is a guard that eventually gets pasted incompletely.
         """
         origin = self.headers.get("Origin")
-        if origin_allowed(origin):
+        if self._allows_origin(origin):
             return True
         self._send_json(403, {"error": f"origin not allowed: {origin}"})
         return False
@@ -140,7 +167,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         read this response", which is the intent.
         """
         origin = self.headers.get("Origin")
-        if origin and origin_allowed(origin):
+        if origin and self._allows_origin(origin):
             self.send_header("Access-Control-Allow-Origin", origin)
             # The response body varies by origin, so it must not be cached
             # under one origin's key and replayed to another.
@@ -221,7 +248,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not self._host_guard():
             return
         origin = self.headers.get("Origin")
-        if not origin_allowed(origin):
+        if not self._allows_origin(origin):
             # Fail the preflight rather than the actual request: the browser
             # then never sends the real one.
             self.send_response(403)
@@ -318,9 +345,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
         pass  # clients poll every few seconds — per-request access logs are noise
 
 
-def build_handler(plugins: dict[str, Plugin] | None = None) -> type[BridgeHandler]:
-    """A handler class bound to one plugin registry."""
-    return type("Handler", (BridgeHandler,), {"plugins": plugins if plugins is not None else {}})
+def build_handler(
+    plugins: dict[str, Plugin] | None = None, *, allowed_origins: Iterable[str] | None = None
+) -> type[BridgeHandler]:
+    """A handler class bound to one plugin registry and, when given, the host's
+    own browser origins (`BridgeHandler.ALLOWED_ORIGINS`; None keeps the shipped set)."""
+    attrs: dict[str, object] = {"plugins": plugins if plugins is not None else {}}
+    if allowed_origins is not None:
+        attrs["ALLOWED_ORIGINS"] = canonical_origins(allowed_origins)
+    return type("Handler", (BridgeHandler,), attrs)
 
 
 def make_server(port: int, handler: type[BaseHTTPRequestHandler]) -> ThreadingHTTPServer:

@@ -11,8 +11,11 @@ import http.client
 import json
 import threading
 from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from typing import ClassVar
+
+import pytest
 
 from voidcraft_world_bridge import __version__
 from voidcraft_world_bridge.server import NAME, PROTOCOL, BridgeHandler, build_handler, make_server
@@ -193,6 +196,73 @@ def test_host_routes_inherit_the_guards_without_asking():
         assert request(port, "GET", "/extra", headers=evil)[0] == 403
         assert request(port, "POST", "/act", headers=evil, body={})[0] == 403
         assert request(port, "GET", "/extra", headers={"Host": "evil.example"})[0] == 403
+
+
+# --- a host's own origins -------------------------------------------------------
+
+
+class _OwnOriginsHandler(_HostHandler):
+    # Spelt loosely on purpose: the class is checked and canonicalised when made.
+    ALLOWED_ORIGINS: ClassVar[AbstractSet[str] | None] = {"HTTPS://Rack.Example:443/"}
+
+
+def test_the_default_handler_still_serves_voidcraft_world():
+    voidcraft = {"Origin": "https://voidcraft.world"}
+    with serving(_HostHandler) as port:
+        status, headers, _ = request(port, "GET", "/extra", headers=voidcraft)
+        assert (status, headers["Access-Control-Allow-Origin"]) == (200, "https://voidcraft.world")
+        assert request(port, "OPTIONS", "/extra", headers=voidcraft)[0] == 204
+
+
+def test_a_host_set_serves_its_own_origin_on_every_method():
+    mine = {"Origin": "https://rack.example"}
+    assert frozenset({"https://rack.example"}) == _OwnOriginsHandler.ALLOWED_ORIGINS
+    with serving(_OwnOriginsHandler) as port:
+        status, headers, _ = request(port, "GET", "/extra", headers=mine)
+        assert (status, headers["Access-Control-Allow-Origin"]) == (200, "https://rack.example")
+        assert request(port, "POST", "/act", headers=mine, body={"k": 1})[0] == 200
+        status, headers, _ = request(port, "OPTIONS", "/act", headers=mine)
+        assert status == 204
+        assert headers["Access-Control-Allow-Origin"] == "https://rack.example"
+        assert headers["Access-Control-Allow-Private-Network"] == "true"
+        # Loopback pages and native clients are every bridge's, whatever the set.
+        assert request(port, "GET", "/extra", headers={"Origin": "http://localhost:5173"})[0] == 200
+        assert request(port, "GET", "/extra")[0] == 200
+
+
+def test_a_host_set_refuses_voidcraft_world():
+    voidcraft = {"Origin": "https://voidcraft.world"}
+    with serving(_OwnOriginsHandler) as port:
+        status, headers, body = request(port, "GET", "/snapshot", headers=voidcraft)
+        assert (status, body["error"]) == (403, "origin not allowed: https://voidcraft.world")
+        assert "Access-Control-Allow-Origin" not in headers
+        assert request(port, "POST", "/act", headers=voidcraft, body={})[0] == 403
+        status, headers, _ = request(port, "OPTIONS", "/act", headers=voidcraft)
+        assert status == 403
+        assert "Access-Control-Allow-Private-Network" not in headers
+
+
+def test_build_handler_takes_a_host_set_and_plugins_obey_it():
+    handler = build_handler({"echo": _Echo()}, allowed_origins=["https://rack.example"])
+    with serving(handler) as port:
+        assert request(port, "GET", "/plugin/echo/hi", headers={"Origin": "https://rack.example"})[0] == 200
+        assert request(port, "POST", "/plugin/echo/hi", headers={"Origin": "https://voidcraft.world"},
+                       body={})[0] == 403
+    assert build_handler().ALLOWED_ORIGINS is None
+
+
+def test_a_misspelt_host_set_fails_when_the_class_is_made():
+    with pytest.raises(ValueError, match="not an origin"):
+        type("Bad", (BridgeHandler,), {"ALLOWED_ORIGINS": {"https://rack.example/app"}})
+    with pytest.raises(TypeError):
+        build_handler(allowed_origins="https://rack.example")
+
+
+def test_a_subclass_of_a_host_inherits_its_set():
+    class _Child(_OwnOriginsHandler):
+        pass
+
+    assert frozenset({"https://rack.example"}) == _Child.ALLOWED_ORIGINS
 
 
 def test_make_server_binds_loopback_only():

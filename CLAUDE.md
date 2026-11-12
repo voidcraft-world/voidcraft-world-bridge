@@ -42,7 +42,10 @@ server they already run (Ollama, LM Studio, llama.cpp, any OpenAI-compatible one
 Subclass `BridgeHandler`, name routes in `GET_ROUTES` / `POST_ROUTES` (path → zero-arg
 method name), override `snapshot_payload()` keeping `bridge_block()` under `bridge` and
 the `plugins` key. The guards run in `do_GET`/`do_POST` ahead of every route, so a host
-route cannot forget them (`tests/test_server.py` asserts that). Mount the built-ins with
+route cannot forget them (`tests/test_server.py` asserts that). A host with a page of its own
+sets `ALLOWED_ORIGINS` (or `build_handler(allowed_origins=…)`); it REPLACES the shipped
+voidcraft.world set, which must stay the default because `uvx` users have no config.
+`server.py` owns why. Mount the built-ins with
 `load_plugins(dirs, context, preloaded=builtin_plugins(context, agent_runtimes=[…]))`.
 
 ## Contracts clients depend on
