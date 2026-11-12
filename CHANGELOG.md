@@ -6,6 +6,15 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+### Added
+
+- A host that embeds the bridge can name its own browser origins: `BridgeHandler.ALLOWED_ORIGINS` on a
+  subclass, or `build_handler(allowed_origins=…)`. Its set replaces the shipped one; loopback and native
+  clients pass under every set. Each entry is checked and put in the browser's spelling when the handler
+  is built, so a typo fails at startup. Passing nothing keeps today's set, so `uvx voidcraft-world-bridge`
+  still answers voidcraft.world. `origin_allowed` takes the set as an optional second argument, and
+  `canonical_origin` / `canonical_origins` are public.
+
 ## [0.1.3] - 2026-10-22
 
 ### Added

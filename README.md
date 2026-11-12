@@ -55,7 +55,8 @@ Access stop it, on purpose. The bridge is the one door through, and it is narrow
 
 - **Loopback only.** It binds `127.0.0.1`. There is no flag to bind anything wider.
 - **Origin allowlist.** Only `voidcraft.world` and pages served from your own machine
-  may call it. Any other site gets a `403`.
+  may call it. Any other site gets a `403`. (A program that embeds the bridge names its own
+  sites instead: `BridgeHandler.ALLOWED_ORIGINS`.)
 - **DNS-rebinding guard.** A request addressed to any hostname other than `localhost` /
   `127.0.0.1` / `[::1]` gets a `403`, even when the origin looks right.
 - **No shell, no files.** It routes chat requests to your model server (and, if you add them,
