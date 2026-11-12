@@ -6,7 +6,7 @@ requires-python = ">=3.10,<4"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "VoidCraft" }]
+authors = [{ name = "Uladzislau Tarsunou" }]
 keywords = ["local-llm", "ollama", "lm-studio", "llama.cpp", "voidcraft", "bridge"]
 classifiers = [
     "Development Status :: 3 - Alpha",
