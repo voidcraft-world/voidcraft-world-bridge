@@ -9,12 +9,19 @@ need no socket.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 from urllib.parse import urlsplit
 
 # The single Origin allowlist for EVERY route: no Origin (curl, CLI, native
-# apps), a deployed VoidCraft origin, or ANY loopback origin — the dev SPA roams
-# ports (vite falls back to 5174+ when 5173 is taken; mkcert flips the scheme),
-# and a loopback page adds nothing an attacker doesn't already have.
+# apps), one of the host's browser origins, or ANY loopback origin — the dev SPA
+# roams ports (vite falls back to 5174+ when 5173 is taken; mkcert flips the
+# scheme), and a loopback page adds nothing an attacker doesn't already have.
+#
+# This set is the shipped default, and it is what `uvx voidcraft-world-bridge`
+# serves: a visitor of voidcraft.world who runs it has no config file, so the
+# default IS the product. A host that embeds the bridge for a page of its own
+# passes its own set instead (`origin_allowed`'s `allowed`).
 #
 # One guard, every route — read routes included. A host's read routes can leak
 # real content (a terminal pane's visible rows, a process's cwd), and wildcard
@@ -45,11 +52,62 @@ def is_loopback_origin(origin: str) -> bool:
         return False
 
 
-def origin_allowed(origin: str | None) -> bool:
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def canonical_origin(value: str) -> str:
+    """One allowlist entry in the spelling a browser sends, or `ValueError`.
+
+    The guard compares an Origin header to the allowlist as a plain string, and a
+    browser serializes it one way only: lowercase scheme and host, no default
+    port, no path. An entry spelt any other way would never match, so a typo
+    would quietly refuse the host's own page. This turns that into an error when
+    the handler is built. `*`, `null` and wildcard hosts are refused: each would
+    read as "allow more" and match nothing, or, in the case of `*`, look like
+    the wildcard CORS this guard exists to replace.
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"an origin is a string, not {type(value).__name__}")
+    hint = f"not an origin: {value!r} (expected scheme://host[:port])"
+    try:
+        parts = urlsplit(value.strip())
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(hint) from exc
+    hostname = parts.hostname
+    if parts.scheme not in _DEFAULT_PORTS or not hostname or "*" in hostname:
+        raise ValueError(hint)
+    if parts.path not in ("", "/") or parts.query or parts.fragment or "@" in parts.netloc:
+        raise ValueError(hint)
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    if port is not None and port != _DEFAULT_PORTS[parts.scheme]:
+        host = f"{host}:{port}"
+    return f"{parts.scheme}://{host}"
+
+
+def canonical_origins(origins: Iterable[str]) -> frozenset[str]:
+    """A host's allowlist, each entry through `canonical_origin`.
+
+    One string is refused rather than read as a collection: `frozenset("https://x")`
+    is a set of letters, and allowing those would allow nothing.
+    """
+    if isinstance(origins, str):
+        raise TypeError("pass a collection of origins, not one string")
+    return frozenset(canonical_origin(origin) for origin in origins)
+
+
+def origin_allowed(origin: str | None, allowed: AbstractSet[str] | None = None) -> bool:
     """Whether a request carrying this Origin may be served at all.
 
     `None` passes so that non-browser clients work: curl, CLI subcommands and
     native apps send no Origin.
+
+    `allowed` is the host's set of browser origins, in the spelling
+    `canonical_origins` gives. `None` means the shipped one,
+    `ALLOWED_BROWSER_ORIGINS`. A host's set REPLACES that default rather than
+    adding to it: a host that wants both passes `ALLOWED_BROWSER_ORIGINS | mine`.
+    Loopback origins pass under every set (see the note on
+    `ALLOWED_BROWSER_ORIGINS`), so an empty set means "pages on this machine only".
 
     An absent Origin is NOT by itself proof of a non-browser client — see
     `is_no_cors_browser_request`, which expensive routes use to tell the two
@@ -57,7 +115,8 @@ def origin_allowed(origin: str | None) -> bool:
     are merely *readable* also serve legitimate no-Origin browser requests (a
     plugin page loaded in an iframe, a hand-typed debug URL).
     """
-    return origin is None or origin in ALLOWED_BROWSER_ORIGINS or is_loopback_origin(origin)
+    browser_origins = ALLOWED_BROWSER_ORIGINS if allowed is None else allowed
+    return origin is None or origin in browser_origins or is_loopback_origin(origin)
 
 
 def is_no_cors_browser_request(origin: str | None, sec_fetch_site: str | None) -> bool:

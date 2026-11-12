@@ -11,6 +11,17 @@ clients depend on are additive-only, so a breaking change is a major version.
 - The copyright and the package author name Uladzislau Tarsunou instead of "VoidCraft", which is not
   a legal entity. The license stays MIT.
 
+## [0.1.4] - 2026-11-12
+
+### Added
+
+- A host that embeds the bridge can name its own browser origins: `BridgeHandler.ALLOWED_ORIGINS` on a
+  subclass, or `build_handler(allowed_origins=…)`. Its set replaces the shipped one; loopback and native
+  clients pass under every set. Each entry is checked and put in the browser's spelling when the handler
+  is built, so a typo fails at startup. Passing nothing keeps today's set, so `uvx voidcraft-world-bridge`
+  still answers voidcraft.world. `origin_allowed` takes the set as an optional second argument, and
+  `canonical_origin` / `canonical_origins` are public.
+
 ## [0.1.3] - 2026-10-22
 
 ### Added
@@ -59,7 +70,8 @@ clients depend on are additive-only, so a breaking change is a major version.
   point it at), picks the strongest installed chat model, and answers `POST /chat` as a job.
 - `voidcraft-world-bridge status`, `--port`, `--version`.
 
-[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.0...v0.1.1
