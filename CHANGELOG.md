@@ -6,6 +6,8 @@ clients depend on are additive-only, so a breaking change is a major version.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-26
+
 ### Changed
 
 - The copyright and the package author name Uladzislau Tarsunou instead of "VoidCraft", which is not
@@ -70,7 +72,8 @@ clients depend on are additive-only, so a breaking change is a major version.
   point it at), picks the strongest installed chat model, and answers `POST /chat` as a job.
 - `voidcraft-world-bridge status`, `--port`, `--version`.
 
-[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/voidcraft-world/voidcraft-world-bridge/compare/v0.1.1...v0.1.2
